@@ -112,7 +112,10 @@ impl ClipStore {
     }
 
     pub fn delete_text(&self, text: &str) -> Result<(), redb::Error> {
-        self.delete_matching(|clip| matches!(&clip.content, ClipContent::Text(t) if t == text), None)
+        self.delete_matching(
+            |clip| matches!(&clip.content, ClipContent::Text(t) if t == text),
+            None,
+        )
     }
 
     pub fn delete_image(&self, path: &str) -> Result<(), redb::Error> {
@@ -169,12 +172,22 @@ impl ClipStore {
         let txn = self.db.begin_write()?;
         {
             let mut clips = txn.open_table(CLIPS)?;
-            let keys: Vec<u64> = clips.iter()?.filter_map(|e| e.ok().map(|(k, _)| k.value())).collect();
-            for k in keys { clips.remove(k)?; }
+            let keys: Vec<u64> = clips
+                .iter()?
+                .filter_map(|e| e.ok().map(|(k, _)| k.value()))
+                .collect();
+            for k in keys {
+                clips.remove(k)?;
+            }
 
             let mut history = txn.open_table(HISTORY)?;
-            let keys: Vec<u64> = history.iter()?.filter_map(|e| e.ok().map(|(k, _)| k.value())).collect();
-            for k in keys { history.remove(k)?; }
+            let keys: Vec<u64> = history
+                .iter()?
+                .filter_map(|e| e.ok().map(|(k, _)| k.value()))
+                .collect();
+            for k in keys {
+                history.remove(k)?;
+            }
         }
         txn.commit()?;
         std::fs::remove_dir_all(&self.images_dir).ok();
@@ -183,7 +196,10 @@ impl ClipStore {
 }
 
 fn now_micros() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_micros() as u64
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_micros() as u64
 }
 
 #[cfg(test)]
@@ -193,7 +209,12 @@ mod tests {
     fn temp_store() -> ClipStore {
         use std::sync::atomic::{AtomicU64, Ordering};
         static N: AtomicU64 = AtomicU64::new(0);
-        ClipStore::open(format!("/tmp/wax_test_{}_{}.redb", now_micros(), N.fetch_add(1, Ordering::Relaxed))).unwrap()
+        ClipStore::open(format!(
+            "/tmp/wax_test_{}_{}.redb",
+            now_micros(),
+            N.fetch_add(1, Ordering::Relaxed)
+        ))
+        .unwrap()
     }
 
     #[test]
@@ -212,9 +233,16 @@ mod tests {
         store.push_text("second").unwrap();
         store.push_text("third").unwrap();
         let results = store.get(10).unwrap();
-        let texts: Vec<&str> = results.iter().map(|c| {
-            if let ClipContent::Text(t) = &c.content { t.as_str() } else { "" }
-        }).collect();
+        let texts: Vec<&str> = results
+            .iter()
+            .map(|c| {
+                if let ClipContent::Text(t) = &c.content {
+                    t.as_str()
+                } else {
+                    ""
+                }
+            })
+            .collect();
         assert_eq!(texts, vec!["third", "second", "first"]);
     }
 
@@ -239,7 +267,9 @@ mod tests {
     #[test]
     fn test_get_last_n() {
         let store = temp_store();
-        for i in 0..20 { store.push_text(&format!("clip {}", i)).unwrap(); }
+        for i in 0..20 {
+            store.push_text(&format!("clip {}", i)).unwrap();
+        }
         let results = store.get(5).unwrap();
         assert_eq!(results.len(), 5);
         assert!(matches!(&results[0].content, ClipContent::Text(t) if t == "clip 19"));
@@ -263,7 +293,9 @@ mod tests {
     fn test_unicode() {
         let store = temp_store();
         store.push_text("こんにちは 🦀 àèìòù").unwrap();
-        assert!(matches!(&store.get(10).unwrap()[0].content, ClipContent::Text(t) if t == "こんにちは 🦀 àèìòù"));
+        assert!(
+            matches!(&store.get(10).unwrap()[0].content, ClipContent::Text(t) if t == "こんにちは 🦀 àèìòù")
+        );
     }
 
     #[test]
@@ -273,6 +305,12 @@ mod tests {
         store.push_text("remove me").unwrap();
         store.push_text("keep").unwrap();
         store.delete_text("remove me").unwrap();
-        assert!(store.get(10).unwrap().iter().all(|c| !matches!(&c.content, ClipContent::Text(t) if t == "remove me")));
+        assert!(
+            store
+                .get(10)
+                .unwrap()
+                .iter()
+                .all(|c| !matches!(&c.content, ClipContent::Text(t) if t == "remove me"))
+        );
     }
 }
