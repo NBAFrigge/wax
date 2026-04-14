@@ -1,11 +1,8 @@
 [package]
-name = "wax-store"
+name = "wax-ipc"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-redb = "4"
-xxhash-rust = { version = "0.8", features = ["xxh3"] }
-bincode = "1"
 serde = { version = "1", features = ["derive"] }
-dirs = "6"
+serde_json = "1"

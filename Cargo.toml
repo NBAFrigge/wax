@@ -1,5 +1,10 @@
 [workspace]
-members = ["crates/wax-daemon", "crates/wax-store", "crates/wax-cli"]
+members = [
+  "crates/wax-daemon",
+  "crates/wax-store",
+  "crates/wax-cli",
+  "crates/wax-ipc",
+]
 resolver = "2"
 
 [workspace.dependencies]
