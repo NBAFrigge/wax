@@ -1,10 +1,17 @@
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
-pub const SOCKET_PATH: &str = "/tmp/wax.sock";
+pub fn socket_path() -> PathBuf {
+    std::env::var("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("/tmp"))
+        .join("wax.sock")
+}
 
 #[derive(Serialize, Deserialize)]
 pub enum Request {
     Get { n: usize },
+    Delete { text: String },
     Clear,
 }
 
@@ -14,4 +21,3 @@ pub enum Response {
     Ok,
     Error(String),
 }
-

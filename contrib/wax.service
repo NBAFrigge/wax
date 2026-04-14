@@ -1,0 +1,19 @@
+[Unit]
+Description=Wax clipboard manager daemon
+Documentation=https://github.com/YOUR_USER/wax
+# Start after the Wayland compositor is available
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.cargo/bin/wax-daemon
+Restart=on-failure
+RestartSec=3
+
+# Logging via systemd journal: journalctl --user -u wax -f
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=graphical-session.target

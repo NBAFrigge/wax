@@ -6,7 +6,7 @@ use std::os::fd::AsFd;
 use std::os::unix::net::UnixListener;
 use std::sync::Arc;
 use tracing::{error, info, warn};
-use wax_ipc::{Request, Response, SOCKET_PATH};
+use wax_ipc::{Request, Response};
 use wax_store::{ClipContent, ClipStore};
 use wayland_client::{Connection, EventQueue};
 use wayland_protocols_wlr::data_control::v1::client::zwlr_data_control_offer_v1::ZwlrDataControlOfferV1;
@@ -28,13 +28,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let device = manager.get_data_device(seat, &qh, ());
     state.device = Some(device);
 
-    let store = Arc::new(ClipStore::open("db.redb")?);
-    info!("wax daemon started");
+    let db_path = wax_store::default_db_path();
+    let store = Arc::new(ClipStore::open(&db_path)?);
+    info!("wax daemon started, db: {}", db_path.display());
 
-    // IPC thread
+    let socket_path = wax_ipc::socket_path();
     let store_ipc = Arc::clone(&store);
-    std::fs::remove_file(SOCKET_PATH).ok();
-    let listener = UnixListener::bind(SOCKET_PATH)?;
+    std::fs::remove_file(&socket_path).ok();
+    let listener = UnixListener::bind(&socket_path)?;
+    info!("listening on {}", socket_path.display());
 
     std::thread::spawn(move || {
         for stream in listener.incoming() {
@@ -64,6 +66,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                         Err(e) => Response::Error(e.to_string()),
                     },
+                    Ok(Request::Delete { text }) => {
+                        let result = if let Some(path) = text.strip_prefix("[img] ") {
+                            store.delete_image(path)
+                        } else {
+                            store.delete_text(&text)
+                        };
+                        match result {
+                            Ok(_) => Response::Ok,
+                            Err(e) => Response::Error(e.to_string()),
+                        }
+                    }
                     Ok(Request::Clear) => match store.clear() {
                         Ok(_) => Response::Ok,
                         Err(e) => Response::Error(e.to_string()),
@@ -78,7 +91,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    // Wayland loop
     loop {
         if let Err(e) = event_queue.blocking_dispatch(&mut state) {
             error!("wayland dispatch error: {}", e);
@@ -92,6 +104,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "image/png"
             } else {
                 state.current_offer = None;
+                state.mime_types.clear();
                 continue;
             };
 
@@ -100,6 +113,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             state.current_offer = None;
+            state.mime_types.clear();
         }
     }
 
@@ -136,4 +150,3 @@ fn handle_offer(
 
     Ok(())
 }
-

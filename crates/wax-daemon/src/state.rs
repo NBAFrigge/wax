@@ -12,8 +12,6 @@ use wayland_protocols_wlr::data_control::v1::client::zwlr_data_control_offer_v1:
     self, ZwlrDataControlOfferV1,
 };
 
-use crate::state;
-
 pub struct State {
     pub manager: Option<ZwlrDataControlManagerV1>,
     pub seat: Option<WlSeat>,
@@ -32,10 +30,6 @@ impl State {
             current_offer: None,
         }
     }
-
-    pub fn clear_mime(&mut self) {
-        self.mime_types.clear();
-    }
 }
 
 impl Dispatch<wl_registry::WlRegistry, ()> for State {
@@ -47,20 +41,12 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
         _conn: &Connection,
         qh: &QueueHandle<Self>,
     ) {
-        if let wl_registry::Event::Global {
-            name,
-            interface,
-            version,
-        } = event
-        {
+        if let wl_registry::Event::Global { name, interface, version } = event {
             if interface == "zwlr_data_control_manager_v1" {
-                let manager =
-                    registry.bind::<ZwlrDataControlManagerV1, _, _>(name, version, qh, ());
-                state.manager = Some(manager);
+                state.manager = Some(registry.bind::<ZwlrDataControlManagerV1, _, _>(name, version, qh, ()));
             }
             if interface == "wl_seat" {
-                let seat = registry.bind::<WlSeat, _, _>(name, version, qh, ());
-                state.seat = Some(seat);
+                state.seat = Some(registry.bind::<WlSeat, _, _>(name, version, qh, ()));
             }
         }
     }
@@ -100,15 +86,13 @@ impl Dispatch<ZwlrDataControlDeviceV1, ()> for State {
         _qh: &QueueHandle<Self>,
     ) {
         match event {
-            zwlr_data_control_device_v1::Event::DataOffer { id } => {
+            zwlr_data_control_device_v1::Event::DataOffer { .. } => {
                 state.mime_types.clear();
             }
             zwlr_data_control_device_v1::Event::Selection { id } => {
                 state.current_offer = id;
             }
-            zwlr_data_control_device_v1::Event::PrimarySelection { id } => {
-                state.mime_types.clear();
-            }
+            zwlr_data_control_device_v1::Event::PrimarySelection { .. } => {}
             zwlr_data_control_device_v1::Event::Finished => {}
             _ => {}
         }
@@ -117,10 +101,11 @@ impl Dispatch<ZwlrDataControlDeviceV1, ()> for State {
     fn event_created_child(opcode: u16, qh: &QueueHandle<Self>) -> Arc<dyn ObjectData> {
         match opcode {
             0 => qh.make_data::<ZwlrDataControlOfferV1, _>(()),
-            _ => panic!("opcode sconosciuto: {}", opcode),
+            _ => panic!("unknown opcode: {}", opcode),
         }
     }
 }
+
 impl Dispatch<ZwlrDataControlOfferV1, ()> for State {
     fn event(
         state: &mut Self,
@@ -130,11 +115,8 @@ impl Dispatch<ZwlrDataControlOfferV1, ()> for State {
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
-        match event {
-            zwlr_data_control_offer_v1::Event::Offer { mime_type } => {
-                state.mime_types.push(mime_type);
-            }
-            _ => {}
+        if let zwlr_data_control_offer_v1::Event::Offer { mime_type } = event {
+            state.mime_types.push(mime_type);
         }
     }
 }
