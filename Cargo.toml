@@ -1,0 +1,11 @@
+[workspace]
+members = ["crates/wax-daemon", "crates/wax-store", "crates/wax-cli"]
+resolver = "2"
+
+[workspace.dependencies]
+redb = "4"
+blake3 = "1"
+serde = { version = "1", features = ["derive"] }
+image = "0.25"
+clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["full"] }
