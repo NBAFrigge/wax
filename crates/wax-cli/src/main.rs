@@ -51,13 +51,22 @@ impl PickerEntry {
             let time = file_time_label(path);
             let display = match (dims.is_empty(), time.is_empty()) {
                 (false, false) => format!("[img] {} · {}", dims, time),
-                (false, true)  => format!("[img] {}", dims),
-                (true,  false) => format!("[img] {}", time),
-                (true,  true)  => "[img]".to_string(),
+                (false, true) => format!("[img] {}", dims),
+                (true, false) => format!("[img] {}", time),
+                (true, true) => "[img]".to_string(),
             };
-            PickerEntry { display, icon_path: Some(path.to_string()), original: clip.to_string() }
+            PickerEntry {
+                display,
+                icon_path: Some(path.to_string()),
+                original: clip.to_string(),
+            }
         } else {
-            PickerEntry { display: clip.to_string(), icon_path: None, original: clip.to_string() }
+            let display = clip.replace('\n', "↵");
+            PickerEntry {
+                display,
+                icon_path: None,
+                original: clip.to_string(),
+            }
         }
     }
 }
@@ -65,8 +74,12 @@ impl PickerEntry {
 fn png_dimensions(path: &str) -> Option<(u32, u32)> {
     let mut buf = [0u8; 24];
     std::fs::File::open(path).ok()?.read_exact(&mut buf).ok()?;
-    if &buf[0..8] != b"\x89PNG\r\n\x1a\n" { return None; }
-    if &buf[12..16] != b"IHDR" { return None; }
+    if &buf[0..8] != b"\x89PNG\r\n\x1a\n" {
+        return None;
+    }
+    if &buf[12..16] != b"IHDR" {
+        return None;
+    }
     let w = u32::from_be_bytes(buf[16..20].try_into().ok()?);
     let h = u32::from_be_bytes(buf[20..24].try_into().ok()?);
     Some((w, h))
@@ -76,12 +89,24 @@ fn file_time_label(path: &str) -> String {
     file_time_label_inner(path).unwrap_or_default()
 }
 
+fn local_utc_offset_secs() -> i64 {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as libc::time_t;
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    unsafe { libc::localtime_r(&now, &mut tm) };
+    tm.tm_gmtoff
+}
+
 fn file_time_label_inner(path: &str) -> Option<String> {
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    let offset = local_utc_offset_secs();
     let mtime = std::fs::metadata(path).and_then(|m| m.modified()).ok()?;
-    let mtime_secs = mtime.duration_since(UNIX_EPOCH).ok()?.as_secs();
-    let now_secs = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs();
+    let mtime_secs = (mtime.duration_since(UNIX_EPOCH).ok()?.as_secs() as i64 + offset) as u64;
+    let now_secs =
+        (SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs() as i64 + offset) as u64;
 
     let today_start = now_secs - (now_secs % 86400);
     let mtime_day = mtime_secs - (mtime_secs % 86400);
@@ -100,8 +125,14 @@ fn epoch_secs_to_date(secs: u64) -> (u64, u64) {
     let mut remaining = secs / 86400;
     let mut y = 1970u64;
     loop {
-        let days_in_year = if (y % 4 == 0 && y % 100 != 0) || y % 400 == 0 { 366 } else { 365 };
-        if remaining < days_in_year { break; }
+        let days_in_year = if (y % 4 == 0 && y % 100 != 0) || y % 400 == 0 {
+            366
+        } else {
+            365
+        };
+        if remaining < days_in_year {
+            break;
+        }
         remaining -= days_in_year;
         y += 1;
     }
@@ -113,7 +144,9 @@ fn epoch_secs_to_date(secs: u64) -> (u64, u64) {
     };
     let mut m = 0usize;
     for &dim in &months {
-        if remaining < dim { break; }
+        if remaining < dim {
+            break;
+        }
         remaining -= dim;
         m += 1;
     }
@@ -152,11 +185,22 @@ impl Picker {
     }
 
     fn spawn(&self, entries: &[PickerEntry]) -> Option<String> {
-        let input = entries.iter().map(|e| self.format_entry(e)).collect::<Vec<_>>().join("\n");
+        let input = entries
+            .iter()
+            .map(|e| self.format_entry(e))
+            .collect::<Vec<_>>()
+            .join("\n");
 
         let mut child = match self {
             Picker::Wofi => Command::new("wofi")
-                .args(["--show", "dmenu", "--prompt", "clipboard", "--no-markup", "--allow-images"])
+                .args([
+                    "--show",
+                    "dmenu",
+                    "--prompt",
+                    "clipboard",
+                    "--no-markup",
+                    "--allow-images",
+                ])
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .spawn()
@@ -183,7 +227,10 @@ impl Picker {
                     cmd.arg("-theme").arg(theme);
                 }
 
-                cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().ok()?
+                cmd.stdin(Stdio::piped())
+                    .stdout(Stdio::piped())
+                    .spawn()
+                    .ok()?
             }
         };
 
@@ -204,7 +251,10 @@ impl Picker {
             selected
         };
 
-        entries.iter().find(|e| e.display == display).map(|e| e.original.clone())
+        entries
+            .iter()
+            .find(|e| e.display == display)
+            .map(|e| e.original.clone())
     }
 }
 
@@ -217,8 +267,13 @@ fn is_in_path(cmd: &str) -> bool {
 
 fn send(req: &Request) -> Result<Response, Box<dyn std::error::Error>> {
     let socket = wax_ipc::socket_path();
-    let stream = UnixStream::connect(&socket)
-        .map_err(|e| format!("cannot connect to wax daemon at {}: {}", socket.display(), e))?;
+    let stream = UnixStream::connect(&socket).map_err(|e| {
+        format!(
+            "cannot connect to wax daemon at {}: {}",
+            socket.display(),
+            e
+        )
+    })?;
     let mut writer = &stream;
     let mut reader = BufReader::new(&stream);
 
@@ -234,7 +289,10 @@ fn send(req: &Request) -> Result<Response, Box<dyn std::error::Error>> {
 fn set_clipboard(clip: &str) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(path) = clip.strip_prefix("[img] ") {
         let data = std::fs::read(path)?;
-        let mut child = Command::new("wl-copy").args(["--type", "image/png"]).stdin(Stdio::piped()).spawn()?;
+        let mut child = Command::new("wl-copy")
+            .args(["--type", "image/png"])
+            .stdin(Stdio::piped())
+            .spawn()?;
         child.stdin.as_mut().unwrap().write_all(&data)?;
         child.wait()?;
     } else {
@@ -245,7 +303,10 @@ fn set_clipboard(clip: &str) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn pick(limit: usize, picker_override: Option<PickerKind>) -> Result<(), Box<dyn std::error::Error>> {
+fn pick(
+    limit: usize,
+    picker_override: Option<PickerKind>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let clips = match send(&Request::Get { n: limit })? {
         Response::Clips(c) => c,
         Response::Error(e) => return Err(e.into()),
@@ -272,7 +333,10 @@ fn pick(limit: usize, picker_override: Option<PickerKind>) -> Result<(), Box<dyn
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
-    match cli.command.unwrap_or(Cmd::Pick { limit: 50, picker: None }) {
+    match cli.command.unwrap_or(Cmd::Pick {
+        limit: 50,
+        picker: None,
+    }) {
         Cmd::Pick { limit, picker } => pick(limit, picker)?,
 
         Cmd::List { n } => match send(&Request::Get { n })? {

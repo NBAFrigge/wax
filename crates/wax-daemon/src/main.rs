@@ -4,6 +4,7 @@ use state::State;
 use std::io::{BufRead, BufReader, Write};
 use std::os::fd::AsFd;
 use std::os::unix::net::UnixListener;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tracing::{error, info, warn};
 use wax_ipc::{Request, Response};
@@ -34,12 +35,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let socket_path = wax_ipc::socket_path();
     let store_ipc = Arc::clone(&store);
+    let running = Arc::new(AtomicBool::new(true));
+    let running_ipc = Arc::clone(&running);
+
     std::fs::remove_file(&socket_path).ok();
     let listener = UnixListener::bind(&socket_path)?;
     info!("listening on {}", socket_path.display());
 
     std::thread::spawn(move || {
         for stream in listener.incoming() {
+            if !running_ipc.load(Ordering::Relaxed) {
+                break;
+            }
             let Ok(stream) = stream else { continue };
             let store = Arc::clone(&store_ipc);
 
@@ -117,6 +124,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    running.store(false, Ordering::Relaxed);
+    std::fs::remove_file(&socket_path).ok();
+    info!("wax daemon stopped");
     Ok(())
 }
 
