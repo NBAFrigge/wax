@@ -12,5 +12,10 @@ redb = "4"
 blake3 = "1"
 serde = { version = "1", features = ["derive"] }
 image = "0.25"
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", default-features = false, features = [
+  "derive",
+  "std",
+  "help",
+  "usage",
+] }
 tokio = { version = "1", features = ["full"] }
