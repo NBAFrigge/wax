@@ -57,16 +57,17 @@ impl ClipStore {
         })
     }
 
-    pub fn push_image(&self, data: &[u8]) -> Result<(), redb::Error> {
+    pub fn push_image(&self, data: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
         let hash = xxh3_64(data);
-        std::fs::create_dir_all(&self.images_dir).ok();
+        std::fs::create_dir_all(&self.images_dir)?;
         let path = self.images_dir.join(format!("{}.png", hash));
-        std::fs::write(&path, data).ok();
+        std::fs::write(&path, data)?;
 
         self.push(Clip {
             content: ClipContent::Image(path.to_string_lossy().to_string()),
             timestamp: now_micros(),
-        })
+        })?;
+        Ok(())
     }
 
     fn push(&self, clip: Clip) -> Result<(), redb::Error> {
