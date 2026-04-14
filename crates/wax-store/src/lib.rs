@@ -59,11 +59,13 @@ impl ClipStore {
     }
 
     pub fn push_text(&self, text: &str) -> Result<(), Box<dyn std::error::Error>> {
-        self.push(Clip {
+        let inserted = self.push(Clip {
             content: ClipContent::Text(text.to_string()),
             timestamp: now_micros(),
         })?;
-        self.rebuild_cache();
+        if inserted {
+            self.prepend_cache(text.as_bytes());
+        }
         Ok(())
     }
 
@@ -73,15 +75,19 @@ impl ClipStore {
         let path = self.images_dir.join(format!("{}.png", hash));
         std::fs::write(&path, data)?;
 
-        self.push(Clip {
-            content: ClipContent::Image(path.to_string_lossy().to_string()),
+        let path_str = path.to_string_lossy().into_owned();
+        let inserted = self.push(Clip {
+            content: ClipContent::Image(path_str.clone()),
             timestamp: now_micros(),
         })?;
-        self.rebuild_cache();
+        if inserted {
+            self.prepend_cache(format!("[img] {}", path_str).as_bytes());
+        }
         Ok(())
     }
 
-    fn push(&self, clip: Clip) -> Result<(), Box<dyn std::error::Error>> {
+    /// Returns `true` if the entry was added to history, `false` if it was a contiguous duplicate.
+    fn push(&self, clip: Clip) -> Result<bool, Box<dyn std::error::Error>> {
         let content_bytes = match &clip.content {
             ClipContent::Text(t) => t.as_bytes().to_vec(),
             ClipContent::Image(p) => p.as_bytes().to_vec(),
@@ -91,18 +97,20 @@ impl ClipStore {
         let bytes = bincode::serialize(&clip)?;
         let txn = self.db.begin_write()?;
 
+        let inserted;
         {
             let mut clips = txn.open_table(CLIPS)?;
             clips.insert(hash_key, bytes.as_slice())?;
 
             let mut history = txn.open_table(HISTORY)?;
             let last_hash = history.last()?.map(|e| e.1.value());
-            if last_hash != Some(hash_key) {
+            inserted = last_hash != Some(hash_key);
+            if inserted {
                 history.insert(now_micros(), hash_key)?;
             }
         }
         txn.commit()?;
-        Ok(())
+        Ok(inserted)
     }
 
     pub fn get(&self, last_n: usize) -> Result<Vec<Clip>, redb::Error> {
@@ -181,6 +189,18 @@ impl ClipStore {
             std::fs::remove_file(path).ok();
         }
         Ok(())
+    }
+
+    fn prepend_cache(&self, entry: &[u8]) {
+        let existing = std::fs::read(cache_path()).unwrap_or_default();
+        let mut content = Vec::with_capacity(entry.len() + 1 + existing.len());
+        content.extend_from_slice(entry);
+        content.push(b'\0');
+        content.extend_from_slice(&existing);
+        let tmp = cache_path().with_extension("tmp");
+        if std::fs::write(&tmp, &content).is_ok() {
+            std::fs::rename(&tmp, cache_path()).ok();
+        }
     }
 
     fn rebuild_cache(&self) {
