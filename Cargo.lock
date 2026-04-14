@@ -539,6 +539,7 @@ dependencies = [
  "libc",
  "serde_json",
  "wax-ipc",
+ "wax-store",
 ]
 
 [[package]]

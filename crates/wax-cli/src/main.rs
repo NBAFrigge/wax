@@ -4,6 +4,20 @@ use std::os::unix::net::UnixStream;
 use std::process::{Command, Stdio};
 use wax_ipc::{Request, Response};
 
+fn read_cache(n: usize) -> Option<Vec<String>> {
+    let bytes = std::fs::read(wax_store::cache_path()).ok()?;
+    if bytes.is_empty() {
+        return Some(vec![]);
+    }
+    let clips = bytes
+        .split(|&b| b == b'\0')
+        .filter(|s| !s.is_empty())
+        .take(n)
+        .map(|s| String::from_utf8_lossy(s).into_owned())
+        .collect();
+    Some(clips)
+}
+
 #[derive(Parser)]
 #[command(name = "wax", about = "Clipboard manager for Wayland / Hyprland")]
 struct Cli {
@@ -311,15 +325,22 @@ fn set_clipboard(clip: &str) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn get_clips(n: usize) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    if let Some(clips) = read_cache(n) {
+        return Ok(clips);
+    }
+    match send(&Request::Get { n })? {
+        Response::Clips(c) => Ok(c),
+        Response::Error(e) => Err(e.into()),
+        _ => Err("unexpected response".into()),
+    }
+}
+
 fn pick(
     limit: usize,
     picker_override: Option<PickerKind>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let clips = match send(&Request::Get { n: limit })? {
-        Response::Clips(c) => c,
-        Response::Error(e) => return Err(e.into()),
-        _ => return Err("unexpected response".into()),
-    };
+    let clips = get_clips(limit)?;
 
     if clips.is_empty() {
         return Ok(());
@@ -347,11 +368,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }) {
         Cmd::Pick { limit, picker } => pick(limit, picker)?,
 
-        Cmd::List { n } => match send(&Request::Get { n })? {
-            Response::Clips(clips) => clips.into_iter().for_each(|c| println!("{}", c)),
-            Response::Error(e) => return Err(e.into()),
-            _ => return Err("unexpected response".into()),
-        },
+        Cmd::List { n } => {
+            let clips = get_clips(n)?;
+            clips.into_iter().for_each(|c| println!("{}", c));
+        }
 
         Cmd::Delete { text } => match send(&Request::Delete { text })? {
             Response::Ok => {}

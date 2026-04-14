@@ -30,6 +30,12 @@ pub fn default_db_path() -> PathBuf {
         .join("wax/db.redb")
 }
 
+pub fn cache_path() -> PathBuf {
+    dirs::data_dir()
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
+        .join("wax/history.cache")
+}
+
 impl ClipStore {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, redb::Error> {
         let path = path.as_ref();
@@ -47,14 +53,18 @@ impl ClipStore {
             .unwrap_or_else(|| PathBuf::from("/tmp"))
             .join("wax/images");
 
-        Ok(Self { db, images_dir })
+        let store = Self { db, images_dir };
+        store.rebuild_cache();
+        Ok(store)
     }
 
     pub fn push_text(&self, text: &str) -> Result<(), Box<dyn std::error::Error>> {
         self.push(Clip {
             content: ClipContent::Text(text.to_string()),
             timestamp: now_micros(),
-        })
+        })?;
+        self.rebuild_cache();
+        Ok(())
     }
 
     pub fn push_image(&self, data: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
@@ -67,6 +77,7 @@ impl ClipStore {
             content: ClipContent::Image(path.to_string_lossy().to_string()),
             timestamp: now_micros(),
         })?;
+        self.rebuild_cache();
         Ok(())
     }
 
@@ -115,7 +126,9 @@ impl ClipStore {
         self.delete_matching(
             |clip| matches!(&clip.content, ClipContent::Text(t) if t == text),
             None,
-        )
+        )?;
+        self.rebuild_cache();
+        Ok(())
     }
 
     pub fn delete_image(&self, path: &str) -> Result<(), redb::Error> {
@@ -123,7 +136,9 @@ impl ClipStore {
         self.delete_matching(
             |clip| matches!(&clip.content, ClipContent::Image(p) if p == &path),
             Some(&path),
-        )
+        )?;
+        self.rebuild_cache();
+        Ok(())
     }
 
     fn delete_matching(
@@ -168,6 +183,27 @@ impl ClipStore {
         Ok(())
     }
 
+    fn rebuild_cache(&self) {
+        let clips = match self.get(1000) {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+        let content: Vec<u8> = clips
+            .iter()
+            .flat_map(|c| {
+                let entry = match &c.content {
+                    ClipContent::Text(t) => t.as_bytes().to_vec(),
+                    ClipContent::Image(p) => format!("[img] {}", p).into_bytes(),
+                };
+                entry.into_iter().chain(std::iter::once(b'\0'))
+            })
+            .collect();
+        let tmp = cache_path().with_extension("tmp");
+        if std::fs::write(&tmp, &content).is_ok() {
+            std::fs::rename(&tmp, cache_path()).ok();
+        }
+    }
+
     pub fn clear(&self) -> Result<(), redb::Error> {
         let txn = self.db.begin_write()?;
         {
@@ -191,6 +227,7 @@ impl ClipStore {
         }
         txn.commit()?;
         std::fs::remove_dir_all(&self.images_dir).ok();
+        self.rebuild_cache();
         Ok(())
     }
 }
