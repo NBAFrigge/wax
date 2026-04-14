@@ -1,6 +1,3 @@
-#[global_allocator]
-static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
-
 mod state;
 
 use state::State;

@@ -15,7 +15,6 @@ strip = true
 panic = "abort"
 
 [workspace.dependencies]
-mimalloc = "0.1"
 redb = "4"
 blake3 = "1"
 serde = { version = "1", features = ["derive"] }
