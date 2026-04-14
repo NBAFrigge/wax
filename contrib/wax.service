@@ -1,13 +1,12 @@
 [Unit]
 Description=Wax clipboard manager daemon
-Documentation=https://github.com/YOUR_USER/wax
-# Start after the Wayland compositor is available
+Documentation=https://github.com/NBAFrigge/wax
 After=graphical-session.target
 PartOf=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=%h/.cargo/bin/wax-daemon
+ExecStart=/usr/bin/wax-daemon
 Restart=on-failure
 RestartSec=3
 
