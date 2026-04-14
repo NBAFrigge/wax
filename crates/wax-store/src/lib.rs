@@ -50,7 +50,7 @@ impl ClipStore {
         Ok(Self { db, images_dir })
     }
 
-    pub fn push_text(&self, text: &str) -> Result<(), redb::Error> {
+    pub fn push_text(&self, text: &str) -> Result<(), Box<dyn std::error::Error>> {
         self.push(Clip {
             content: ClipContent::Text(text.to_string()),
             timestamp: now_micros(),
@@ -70,14 +70,14 @@ impl ClipStore {
         Ok(())
     }
 
-    fn push(&self, clip: Clip) -> Result<(), redb::Error> {
+    fn push(&self, clip: Clip) -> Result<(), Box<dyn std::error::Error>> {
         let content_bytes = match &clip.content {
             ClipContent::Text(t) => t.as_bytes().to_vec(),
             ClipContent::Image(p) => p.as_bytes().to_vec(),
         };
 
         let hash_key = xxh3_64(&content_bytes);
-        let bytes = bincode::serialize(&clip).unwrap();
+        let bytes = bincode::serialize(&clip)?;
         let txn = self.db.begin_write()?;
 
         {
@@ -198,7 +198,7 @@ impl ClipStore {
 fn now_micros() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
+        .unwrap_or_default()
         .as_micros() as u64
 }
 

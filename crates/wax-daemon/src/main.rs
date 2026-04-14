@@ -91,7 +91,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     Err(e) => Response::Error(format!("invalid request: {}", e)),
                 };
 
-                let mut json = serde_json::to_string(&response).unwrap();
+                let Ok(mut json) = serde_json::to_string(&response) else {
+                    return;
+                };
                 json.push('\n');
                 writer.write_all(json.as_bytes()).ok();
             });

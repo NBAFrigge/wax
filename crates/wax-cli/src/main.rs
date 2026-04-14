@@ -293,11 +293,19 @@ fn set_clipboard(clip: &str) -> Result<(), Box<dyn std::error::Error>> {
             .args(["--type", "image/png"])
             .stdin(Stdio::piped())
             .spawn()?;
-        child.stdin.as_mut().unwrap().write_all(&data)?;
+        child
+            .stdin
+            .as_mut()
+            .ok_or("wl-copy stdin unavailable")?
+            .write_all(&data)?;
         child.wait()?;
     } else {
         let mut child = Command::new("wl-copy").stdin(Stdio::piped()).spawn()?;
-        child.stdin.as_mut().unwrap().write_all(clip.as_bytes())?;
+        child
+            .stdin
+            .as_mut()
+            .ok_or("wl-copy stdin unavailable")?
+            .write_all(clip.as_bytes())?;
         child.wait()?;
     }
     Ok(())

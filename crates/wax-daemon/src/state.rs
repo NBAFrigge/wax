@@ -101,7 +101,10 @@ impl Dispatch<ZwlrDataControlDeviceV1, ()> for State {
     fn event_created_child(opcode: u16, qh: &QueueHandle<Self>) -> Arc<dyn ObjectData> {
         match opcode {
             0 => qh.make_data::<ZwlrDataControlOfferV1, _>(()),
-            _ => panic!("unknown opcode: {}", opcode),
+            _ => {
+                eprintln!("wax: unknown opcode {} in event_created_child, ignoring", opcode);
+                qh.make_data::<ZwlrDataControlOfferV1, _>(())
+            }
         }
     }
 }
