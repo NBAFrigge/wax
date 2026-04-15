@@ -125,11 +125,12 @@ fn epoch_secs_to_date(secs: u64) -> (u64, u64) {
     let mut remaining = secs / 86400;
     let mut y = 1970u64;
     loop {
-        let days_in_year = if (y.is_multiple_of(4) && !y.is_multiple_of(100)) || y.is_multiple_of(400) {
-            366
-        } else {
-            365
-        };
+        let days_in_year =
+            if (y.is_multiple_of(4) && !y.is_multiple_of(100)) || y.is_multiple_of(400) {
+                366
+            } else {
+                365
+            };
         if remaining < days_in_year {
             break;
         }
