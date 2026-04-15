@@ -1,2 +1,6 @@
 /target
 db.redb
+contrib/pkg/
+contrib/src/
+contrib/wax-clipboard/
+contrib/*.pkg.tar.zst
