@@ -1,0 +1,30 @@
+name: Benchmarks
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - run: cargo bench --no-run --locked
+
+      - run: cargo bench -- --output-format bencher | tee output.txt
+
+      - uses: benchmark-action/github-action-benchmark@v1
+        with:
+          tool: cargo
+          output-file-path: output.txt
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          auto-push: true
+          alert-threshold: 130%
+          comment-on-alert: true
+          fail-on-alert: true
