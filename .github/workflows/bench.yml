@@ -17,7 +17,7 @@ jobs:
 
       - run: cargo bench --no-run --locked
 
-      - run: cargo bench -- --output-format bencher | tee output.txt
+      - run: cargo bench -- --output-format bencher 2>&1 | tee output.txt
 
       - uses: benchmark-action/github-action-benchmark@v1
         with:
