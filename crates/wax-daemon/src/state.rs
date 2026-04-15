@@ -41,9 +41,15 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
         _conn: &Connection,
         qh: &QueueHandle<Self>,
     ) {
-        if let wl_registry::Event::Global { name, interface, version } = event {
+        if let wl_registry::Event::Global {
+            name,
+            interface,
+            version,
+        } = event
+        {
             if interface == "zwlr_data_control_manager_v1" {
-                state.manager = Some(registry.bind::<ZwlrDataControlManagerV1, _, _>(name, version, qh, ()));
+                state.manager =
+                    Some(registry.bind::<ZwlrDataControlManagerV1, _, _>(name, version, qh, ()));
             }
             if interface == "wl_seat" {
                 state.seat = Some(registry.bind::<WlSeat, _, _>(name, version, qh, ()));
@@ -102,7 +108,10 @@ impl Dispatch<ZwlrDataControlDeviceV1, ()> for State {
         match opcode {
             0 => qh.make_data::<ZwlrDataControlOfferV1, _>(()),
             _ => {
-                eprintln!("wax: unknown opcode {} in event_created_child, ignoring", opcode);
+                eprintln!(
+                    "wax: unknown opcode {} in event_created_child, ignoring",
+                    opcode
+                );
                 qh.make_data::<ZwlrDataControlOfferV1, _>(())
             }
         }

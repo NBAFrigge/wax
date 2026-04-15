@@ -16,7 +16,9 @@ fn temp_store() -> ClipStore {
 fn store_with_entries(n: usize) -> ClipStore {
     let store = temp_store();
     for i in 0..n {
-        store.push_text(&format!("bench entry number {}", i)).unwrap();
+        store
+            .push_text(&format!("bench entry number {}", i))
+            .unwrap();
     }
     store
 }

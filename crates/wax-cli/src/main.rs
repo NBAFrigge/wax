@@ -4,7 +4,6 @@ use std::os::unix::net::UnixStream;
 use std::process::{Command, Stdio};
 use wax_ipc::{Request, Response};
 
-
 #[derive(Parser)]
 #[command(name = "wax", about = "Clipboard manager for Wayland / Hyprland")]
 struct Cli {
