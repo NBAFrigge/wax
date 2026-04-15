@@ -56,7 +56,7 @@ fn bench_get(c: &mut Criterion) {
 
 fn bench_push_text(c: &mut Criterion) {
     let mut group = c.benchmark_group("push_text");
-    for &size in &[0usize, 100, 1_000, 10_000] {
+    for &size in &[0usize, 100, 1_000] {
         group.bench_with_input(BenchmarkId::new("db_entries", size), &size, |b, &size| {
             b.iter_batched(
                 || {

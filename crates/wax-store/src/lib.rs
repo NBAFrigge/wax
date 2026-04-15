@@ -105,7 +105,6 @@ impl ClipStore {
         Ok(())
     }
 
-    /// Returns `true` if the entry was added to history, `false` if it was a contiguous duplicate.
     fn push(&self, clip: Clip) -> Result<bool, Box<dyn std::error::Error>> {
         let content_bytes = match &clip.content {
             ClipContent::Text(t) => t.as_bytes().to_vec(),
