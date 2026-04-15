@@ -4,12 +4,12 @@ Fast Wayland clipboard manager. Stores text and images, picked via rofi or wofi.
 
 ```
 Benchmark 1: wax list
-  Time (mean ± σ):   2.2 ms ±   1.1 ms    [User: 0.6 ms, System: 1.1 ms]
+  Time (mean ± σ):   2.0 ms ±   0.7 ms    [User: 0.9 ms, System: 0.9 ms]
 
 Benchmark 2: cliphist list
-  Time (mean ± σ):   5.2 ms ±   1.3 ms    [User: 3.1 ms, System: 2.4 ms]
+  Time (mean ± σ):   7.5 ms ±   1.5 ms    [User: 4.5 ms, System: 3.5 ms]
 
-Summary: wax list ran 2.36x faster than cliphist list
+Summary: wax list ran 3.79x faster than cliphist list
 ```
 
 ## Dependencies
@@ -19,11 +19,20 @@ Summary: wax list ran 2.36x faster than cliphist list
 
 ## Install
 
-### Manual
+### Arch Linux (AUR)
 
 ```
-cargo install --path crates/wax-daemon --locked
-cargo install --path crates/wax-cli --locked
+yay -S wax-clipboard
+```
+
+### From source
+
+```
+git clone https://github.com/NBAFrigge/wax
+cd wax
+cargo build --release --locked
+sudo install -Dm755 target/release/wax-daemon /usr/bin/wax-daemon
+sudo install -Dm755 target/release/wax /usr/bin/wax
 ```
 
 ## Setup
@@ -37,8 +46,24 @@ systemctl --user enable --now wax
 Add to your Hyprland config:
 
 ```
-bind = $mod, V, exec, wax
+bind = $mod, V, exec, /usr/bin/wax
 ```
+
+## Configuration
+
+The daemon creates `~/.config/wax/config.toml` on first run:
+
+```toml
+max_db_mb = 50
+max_images_mb = 100
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `max_db_mb` | `50` | Maximum size of the database in MB |
+| `max_images_mb` | `100` | Maximum size of the images folder in MB |
+
+When a limit is exceeded, the oldest entries are removed automatically.
 
 ## Usage
 
@@ -48,4 +73,12 @@ wax list         # print history
 wax pick         # open picker explicitly
 wax delete <x>   # delete entry
 wax clear        # clear all
+```
+
+### Picker options
+
+```
+wax pick --limit 100          # show last 100 entries
+wax pick --picker wofi        # force wofi
+wax pick --picker rofi        # force rofi
 ```
