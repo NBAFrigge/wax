@@ -3,6 +3,14 @@ name = "wax-store"
 version = "0.1.0"
 edition = "2024"
 
+[dev-dependencies]
+criterion = { workspace = true }
+tempfile = "3"
+
+[[bench]]
+name = "store"
+harness = false
+
 [dependencies]
 redb = "4"
 xxhash-rust = { version = "0.8", features = ["xxh3"] }

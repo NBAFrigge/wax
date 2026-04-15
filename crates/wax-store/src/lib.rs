@@ -36,6 +36,25 @@ pub fn cache_path() -> PathBuf {
         .join("wax/history.cache")
 }
 
+pub fn read_cache(n: usize) -> Option<Vec<String>> {
+    read_cache_from(&cache_path(), n)
+}
+
+pub fn read_cache_from(path: &Path, n: usize) -> Option<Vec<String>> {
+    let bytes = std::fs::read(path).ok()?;
+    if bytes.is_empty() {
+        return Some(vec![]);
+    }
+    Some(
+        bytes
+            .split(|&b| b == b'\0')
+            .filter(|s| !s.is_empty())
+            .take(n)
+            .map(|s| String::from_utf8_lossy(s).into_owned())
+            .collect(),
+    )
+}
+
 impl ClipStore {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, redb::Error> {
         let path = path.as_ref();

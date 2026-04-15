@@ -4,19 +4,6 @@ use std::os::unix::net::UnixStream;
 use std::process::{Command, Stdio};
 use wax_ipc::{Request, Response};
 
-fn read_cache(n: usize) -> Option<Vec<String>> {
-    let bytes = std::fs::read(wax_store::cache_path()).ok()?;
-    if bytes.is_empty() {
-        return Some(vec![]);
-    }
-    let clips = bytes
-        .split(|&b| b == b'\0')
-        .filter(|s| !s.is_empty())
-        .take(n)
-        .map(|s| String::from_utf8_lossy(s).into_owned())
-        .collect();
-    Some(clips)
-}
 
 #[derive(Parser)]
 #[command(name = "wax", about = "Clipboard manager for Wayland / Hyprland")]
@@ -326,7 +313,7 @@ fn set_clipboard(clip: &str) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn get_clips(n: usize) -> Result<Vec<String>, Box<dyn std::error::Error>> {
-    if let Some(clips) = read_cache(n) {
+    if let Some(clips) = wax_store::read_cache(n) {
         return Ok(clips);
     }
     match send(&Request::Get { n })? {
