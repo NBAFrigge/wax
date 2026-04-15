@@ -10,7 +10,7 @@ fn temp_store() -> ClipStore {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_micros();
-    ClipStore::open(format!("/tmp/wax_bench_{}_{}.redb", ts, id)).unwrap()
+    ClipStore::open(format!("/tmp/wax_bench_{}_{}.redb", ts, id), wax_store::Limits::default()).unwrap()
 }
 
 fn store_with_entries(n: usize) -> ClipStore {

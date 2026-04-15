@@ -1,9 +1,13 @@
 [package]
 name = "wax-daemon"
-version = "0.1.1"
+version.workspace = true
 edition = "2024"
 
 [dependencies]
+serde = { workspace = true }
+toml = "0.8"
+dirs = "6"
+
 wayland-client = "0.31"
 wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 rustix = { version = "1", features = ["pipe"] }

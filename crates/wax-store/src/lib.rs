@@ -4,7 +4,6 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use xxhash_rust::xxh3::xxh3_64;
 
-
 const CLIPS: TableDefinition<u64, &[u8]> = TableDefinition::new("clips");
 const HISTORY: TableDefinition<u64, u64> = TableDefinition::new("history");
 
@@ -19,9 +18,25 @@ pub struct Clip {
     pub content: ClipContent,
 }
 
+pub struct Limits {
+    pub max_db_bytes: u64,
+    pub max_images_bytes: u64,
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        Self {
+            max_db_bytes: u64::MAX,
+            max_images_bytes: u64::MAX,
+        }
+    }
+}
+
 pub struct ClipStore {
     db: Database,
+    db_path: PathBuf,
     images_dir: PathBuf,
+    limits: Limits,
 }
 
 pub fn default_db_path() -> PathBuf {
@@ -56,12 +71,12 @@ pub fn read_cache_from(path: &Path, n: usize) -> Option<Vec<String>> {
 }
 
 impl ClipStore {
-    pub fn open(path: impl AsRef<Path>) -> Result<Self, redb::Error> {
-        let path = path.as_ref();
+    pub fn open(path: impl AsRef<Path>, limits: Limits) -> Result<Self, redb::Error> {
+        let path = path.as_ref().to_path_buf();
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).ok();
         }
-        let db = Database::create(path)?;
+        let db = Database::create(&path)?;
 
         let txn = db.begin_write()?;
         txn.open_table(CLIPS)?;
@@ -72,7 +87,12 @@ impl ClipStore {
             .unwrap_or_else(|| PathBuf::from("/tmp"))
             .join("wax/images");
 
-        let store = Self { db, images_dir };
+        let store = Self {
+            db,
+            db_path: path,
+            images_dir,
+            limits,
+        };
         store.rebuild_cache();
         Ok(store)
     }
@@ -83,6 +103,7 @@ impl ClipStore {
         })?;
         if inserted {
             self.prepend_cache(text.as_bytes());
+            self.enforce_limits();
         }
         Ok(())
     }
@@ -99,19 +120,18 @@ impl ClipStore {
         })?;
         if inserted {
             self.prepend_cache(format!("[img] {}", path_str).as_bytes());
+            self.enforce_limits();
         }
         Ok(())
     }
 
     fn push(&self, clip: Clip) -> Result<bool, Box<dyn std::error::Error>> {
-        let content_bytes = match &clip.content {
-            ClipContent::Text(t) => t.as_bytes(),
-            ClipContent::Image(p) => p.as_bytes(),
+        let hash_key = match &clip.content {
+            ClipContent::Text(t) => xxh3_64(t.as_bytes()),
+            ClipContent::Image(p) => xxh3_64(p.as_bytes()),
         };
 
-        let hash_key = xxh3_64(&content_bytes);
         let txn = self.db.begin_write()?;
-
         let inserted;
         {
             let mut history = txn.open_table(HISTORY)?;
@@ -209,6 +229,62 @@ impl ClipStore {
         Ok(())
     }
 
+    fn trim_oldest(&self, n: usize) -> Result<(), Box<dyn std::error::Error>> {
+        let txn = self.db.begin_write()?;
+        {
+            let mut history = txn.open_table(HISTORY)?;
+            let mut clips = txn.open_table(CLIPS)?;
+
+            let to_remove: Vec<(u64, u64)> = history
+                .iter()?
+                .take(n)
+                .filter_map(|e| {
+                    let (k, v) = e.ok()?;
+                    Some((k.value(), v.value()))
+                })
+                .collect();
+
+            for (ts, _) in &to_remove {
+                history.remove(ts)?;
+            }
+
+            let still_referenced: std::collections::HashSet<u64> = history
+                .iter()?
+                .filter_map(|e| e.ok().map(|(_, v)| v.value()))
+                .collect();
+
+            for (_, hash) in &to_remove {
+                if !still_referenced.contains(hash) {
+                    if let Ok(Some(data)) = clips.get(hash) {
+                        if let Ok(clip) = bincode::deserialize::<Clip>(data.value()) {
+                            if let ClipContent::Image(path) = clip.content {
+                                std::fs::remove_file(&path).ok();
+                            }
+                        }
+                    }
+                    clips.remove(hash)?;
+                }
+            }
+        }
+        txn.commit()?;
+        self.rebuild_cache();
+        Ok(())
+    }
+
+    fn enforce_limits(&self) {
+        let db_size = std::fs::metadata(&self.db_path)
+            .map(|m| m.len())
+            .unwrap_or(0);
+        if db_size > self.limits.max_db_bytes {
+            self.trim_oldest(50).ok();
+        }
+
+        let images_size = dir_size(&self.images_dir);
+        if images_size > self.limits.max_images_bytes {
+            self.trim_oldest(50).ok();
+        }
+    }
+
     fn prepend_cache(&self, entry: &[u8]) {
         let existing = std::fs::read(cache_path()).unwrap_or_default();
         let mut content = Vec::with_capacity(entry.len() + 1 + existing.len());
@@ -271,6 +347,19 @@ impl ClipStore {
     }
 }
 
+fn dir_size(path: &Path) -> u64 {
+    std::fs::read_dir(path)
+        .ok()
+        .map(|entries| {
+            entries
+                .filter_map(|e| e.ok())
+                .filter_map(|e| e.metadata().ok())
+                .map(|m| m.len())
+                .sum()
+        })
+        .unwrap_or(0)
+}
+
 fn now_micros() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -285,11 +374,14 @@ mod tests {
     fn temp_store() -> ClipStore {
         use std::sync::atomic::{AtomicU64, Ordering};
         static N: AtomicU64 = AtomicU64::new(0);
-        ClipStore::open(format!(
-            "/tmp/wax_test_{}_{}.redb",
-            now_micros(),
-            N.fetch_add(1, Ordering::Relaxed)
-        ))
+        ClipStore::open(
+            format!(
+                "/tmp/wax_test_{}_{}.redb",
+                now_micros(),
+                N.fetch_add(1, Ordering::Relaxed)
+            ),
+            Limits::default(),
+        )
         .unwrap()
     }
 
@@ -388,5 +480,39 @@ mod tests {
                 .iter()
                 .all(|c| !matches!(&c.content, ClipContent::Text(t) if t == "remove me"))
         );
+    }
+
+    #[test]
+    fn test_trim_oldest() {
+        let store = temp_store();
+        for i in 0..20 {
+            store.push_text(&format!("entry {}", i)).unwrap();
+        }
+        store.trim_oldest(10).unwrap();
+        let results = store.get(20).unwrap();
+        assert_eq!(results.len(), 10);
+        assert!(matches!(&results[0].content, ClipContent::Text(t) if t == "entry 19"));
+    }
+
+    #[test]
+    fn test_enforce_limits() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static N: AtomicU64 = AtomicU64::new(0);
+        let store = ClipStore::open(
+            format!(
+                "/tmp/wax_limits_{}_{}.redb",
+                now_micros(),
+                N.fetch_add(1, Ordering::Relaxed)
+            ),
+            Limits {
+                max_db_bytes: 1,
+                max_images_bytes: u64::MAX,
+            },
+        )
+        .unwrap();
+        for i in 0..60 {
+            store.push_text(&format!("entry {}", i)).unwrap();
+        }
+        assert!(store.get(100).unwrap().len() < 60);
     }
 }

@@ -1,3 +1,4 @@
+mod config;
 mod state;
 
 use state::State;
@@ -29,8 +30,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let device = manager.get_data_device(seat, &qh, ());
     state.device = Some(device);
 
+    let config = config::Config::load();
+    let limits = wax_store::Limits {
+        max_db_bytes: config.max_db_mb * 1024 * 1024,
+        max_images_bytes: config.max_images_mb * 1024 * 1024,
+    };
+
     let db_path = wax_store::default_db_path();
-    let store = Arc::new(ClipStore::open(&db_path)?);
+    let store = Arc::new(ClipStore::open(&db_path, limits)?);
     info!("wax daemon started, db: {}", db_path.display());
 
     let socket_path = wax_ipc::socket_path();
