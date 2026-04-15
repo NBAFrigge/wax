@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use xxhash_rust::xxh3::xxh3_64;
 
+
 const CLIPS: TableDefinition<u64, &[u8]> = TableDefinition::new("clips");
 const HISTORY: TableDefinition<u64, u64> = TableDefinition::new("history");
 
@@ -16,7 +17,6 @@ pub enum ClipContent {
 #[derive(Serialize, Deserialize)]
 pub struct Clip {
     pub content: ClipContent,
-    pub timestamp: u64,
 }
 
 pub struct ClipStore {
@@ -50,7 +50,7 @@ pub fn read_cache_from(path: &Path, n: usize) -> Option<Vec<String>> {
             .split(|&b| b == b'\0')
             .filter(|s| !s.is_empty())
             .take(n)
-            .map(|s| String::from_utf8_lossy(s).into_owned())
+            .filter_map(|s| std::str::from_utf8(s).ok().map(|s| s.to_owned()))
             .collect(),
     )
 }
@@ -80,7 +80,6 @@ impl ClipStore {
     pub fn push_text(&self, text: &str) -> Result<(), Box<dyn std::error::Error>> {
         let inserted = self.push(Clip {
             content: ClipContent::Text(text.to_string()),
-            timestamp: now_micros(),
         })?;
         if inserted {
             self.prepend_cache(text.as_bytes());
@@ -97,7 +96,6 @@ impl ClipStore {
         let path_str = path.to_string_lossy().into_owned();
         let inserted = self.push(Clip {
             content: ClipContent::Image(path_str.clone()),
-            timestamp: now_micros(),
         })?;
         if inserted {
             self.prepend_cache(format!("[img] {}", path_str).as_bytes());
@@ -107,23 +105,25 @@ impl ClipStore {
 
     fn push(&self, clip: Clip) -> Result<bool, Box<dyn std::error::Error>> {
         let content_bytes = match &clip.content {
-            ClipContent::Text(t) => t.as_bytes().to_vec(),
-            ClipContent::Image(p) => p.as_bytes().to_vec(),
+            ClipContent::Text(t) => t.as_bytes(),
+            ClipContent::Image(p) => p.as_bytes(),
         };
 
         let hash_key = xxh3_64(&content_bytes);
-        let bytes = bincode::serialize(&clip)?;
         let txn = self.db.begin_write()?;
 
         let inserted;
         {
-            let mut clips = txn.open_table(CLIPS)?;
-            clips.insert(hash_key, bytes.as_slice())?;
-
             let mut history = txn.open_table(HISTORY)?;
             let last_hash = history.last()?.map(|e| e.1.value());
             inserted = last_hash != Some(hash_key);
+
             if inserted {
+                let mut clips = txn.open_table(CLIPS)?;
+                if clips.get(hash_key)?.is_none() {
+                    let bytes = bincode::serialize(&clip)?;
+                    clips.insert(hash_key, bytes.as_slice())?;
+                }
                 history.insert(now_micros(), hash_key)?;
             }
         }
@@ -188,18 +188,18 @@ impl ClipStore {
             let mut clips = txn.open_table(CLIPS)?;
             let mut history = txn.open_table(HISTORY)?;
 
-            for hash in to_remove {
+            for hash in &to_remove {
                 clips.remove(hash)?;
-                let ts_to_remove: Vec<u64> = history
-                    .iter()?
-                    .filter_map(|e| {
-                        let (k, v) = e.ok()?;
-                        (v.value() == hash).then_some(k.value())
-                    })
-                    .collect();
-                for ts in ts_to_remove {
-                    history.remove(ts)?;
-                }
+            }
+            let ts_to_remove: Vec<u64> = history
+                .iter()?
+                .filter_map(|e| {
+                    let (k, v) = e.ok()?;
+                    to_remove.contains(&v.value()).then_some(k.value())
+                })
+                .collect();
+            for ts in ts_to_remove {
+                history.remove(ts)?;
             }
         }
         txn.commit()?;
@@ -226,16 +226,17 @@ impl ClipStore {
             Ok(c) => c,
             Err(_) => return,
         };
-        let content: Vec<u8> = clips
-            .iter()
-            .flat_map(|c| {
-                let entry = match &c.content {
-                    ClipContent::Text(t) => t.as_bytes().to_vec(),
-                    ClipContent::Image(p) => format!("[img] {}", p).into_bytes(),
-                };
-                entry.into_iter().chain(std::iter::once(b'\0'))
-            })
-            .collect();
+        let mut content = Vec::new();
+        for c in &clips {
+            match &c.content {
+                ClipContent::Text(t) => content.extend_from_slice(t.as_bytes()),
+                ClipContent::Image(p) => {
+                    content.extend_from_slice(b"[img] ");
+                    content.extend_from_slice(p.as_bytes());
+                }
+            }
+            content.push(b'\0');
+        }
         let tmp = cache_path().with_extension("tmp");
         if std::fs::write(&tmp, &content).is_ok() {
             std::fs::rename(&tmp, cache_path()).ok();

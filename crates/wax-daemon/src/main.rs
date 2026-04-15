@@ -107,9 +107,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         if let Some(offer) = &state.current_offer {
-            let mime = if state.mime_types.contains(&"text/plain".to_string()) {
+            let mime = if state.mime_types.iter().any(|m| m == "text/plain") {
                 "text/plain"
-            } else if state.mime_types.contains(&"image/png".to_string()) {
+            } else if state.mime_types.iter().any(|m| m == "image/png") {
                 "image/png"
             } else {
                 state.current_offer = None;
