@@ -15,9 +15,9 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - run: cargo bench -p wax-store --no-run --locked
+      - run: cargo bench -p wax-store --bench store --no-run --locked
 
-      - run: cargo bench -p wax-store -- --output-format bencher 2>&1 | tee output.txt
+      - run: cargo bench -p wax-store --bench store -- --output-format bencher 2>&1 | tee output.txt
 
       - uses: benchmark-action/github-action-benchmark@v1
         with:
