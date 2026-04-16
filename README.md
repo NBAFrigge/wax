@@ -56,29 +56,41 @@ The daemon creates `~/.config/wax/config.toml` on first run:
 ```toml
 max_db_mb = 50
 max_images_mb = 100
+# ttl_secs = 604800  # 7 days
+
+clipboard = true
+primary_selection = false
+
+# excluded_pattern = ["password", "secret.*"]
 ```
 
 | Key | Default | Description |
 |---|---|---|
 | `max_db_mb` | `50` | Maximum size of the database in MB |
 | `max_images_mb` | `100` | Maximum size of the images folder in MB |
+| `ttl_secs` | unset | Automatically delete entries older than this many seconds |
+| `clipboard` | `true` | Track the regular clipboard (Ctrl+C) |
+| `primary_selection` | `false` | Track the primary selection (mouse highlight) |
+| `excluded_pattern` | `[]` | List of regex patterns — matching entries are not saved |
+| `max_display_len` | `50` | Max characters shown per entry in the picker |
+| `limit` | `50` | Number of entries shown by default in the picker |
 
-When a limit is exceeded, the oldest entries are removed automatically.
+When a size limit is exceeded, the oldest entries are removed automatically.
 
 ## Usage
 
 ```
 wax              # open picker (default: last 50 entries)
-wax list         # print history
+wax list [N]     # print last N entries (default: 50)
 wax pick         # open picker explicitly
-wax delete <x>   # delete entry
-wax clear        # clear all
+wax delete <x>   # delete entry matching <x>
+wax clear        # clear all history
 ```
 
-### Picker options
+### Pick flags
 
-```
-wax pick --limit 100          # show last 100 entries
-wax pick --picker wofi        # force wofi
-wax pick --picker rofi        # force rofi
-```
+| Flag | Description |
+|---|---|
+| `--limit <N>` | Show last N entries (overrides `limit` in config) |
+| `--picker rofi\|wofi` | Force a specific picker (default: auto-detect) |
+| `--instant-paste` | After selection, refocus the previous window and paste automatically |
