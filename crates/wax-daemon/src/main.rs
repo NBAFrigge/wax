@@ -136,6 +136,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         if let Some(offer) = &state.current_offer {
+            let skip = if state.is_primary {
+                !config.primary_selection
+            } else {
+                !config.clipboard
+            };
+
+            if skip {
+                state.current_offer = None;
+                state.mime_types.clear();
+                continue;
+            }
+
             let mime = if state.mime_types.iter().any(|m| m == "text/plain") {
                 "text/plain"
             } else if state.mime_types.iter().any(|m| m == "image/png") {

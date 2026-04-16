@@ -18,6 +18,7 @@ pub struct State {
     pub device: Option<ZwlrDataControlDeviceV1>,
     pub mime_types: Vec<String>,
     pub current_offer: Option<ZwlrDataControlOfferV1>,
+    pub is_primary: bool,
 }
 
 impl State {
@@ -28,6 +29,7 @@ impl State {
             device: None,
             mime_types: Vec::with_capacity(16),
             current_offer: None,
+            is_primary: false,
         }
     }
 }
@@ -97,9 +99,11 @@ impl Dispatch<ZwlrDataControlDeviceV1, ()> for State {
             }
             zwlr_data_control_device_v1::Event::Selection { id } => {
                 state.current_offer = id;
+                state.is_primary = false;
             }
             zwlr_data_control_device_v1::Event::PrimarySelection { id } => {
                 state.current_offer = id;
+                state.is_primary = true;
             }
             zwlr_data_control_device_v1::Event::Finished => {}
             _ => {}
