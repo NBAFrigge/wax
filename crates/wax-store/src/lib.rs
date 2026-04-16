@@ -18,6 +18,7 @@ pub struct Clip {
     pub content: ClipContent,
 }
 
+#[derive(Clone)]
 pub struct Limits {
     pub max_db_bytes: u64,
     pub max_images_bytes: u64,
@@ -136,16 +137,16 @@ impl ClipStore {
         let txn = self.db.begin_write()?;
         let inserted;
         {
+            let mut clips = txn.open_table(CLIPS)?;
             let mut history = txn.open_table(HISTORY)?;
+
             let last_hash = history.last()?.map(|e| e.1.value());
-            inserted = last_hash != Some(hash_key);
+            let already_exists = clips.get(hash_key)?.is_some();
+            inserted = last_hash != Some(hash_key) && !already_exists;
 
             if inserted {
-                let mut clips = txn.open_table(CLIPS)?;
-                if clips.get(hash_key)?.is_none() {
-                    let bytes = bincode::serialize(&clip)?;
-                    clips.insert(hash_key, bytes.as_slice())?;
-                }
+                let bytes = bincode::serialize(&clip)?;
+                clips.insert(hash_key, bytes.as_slice())?;
                 history.insert(now_micros(), hash_key)?;
             }
         }
@@ -505,7 +506,7 @@ mod tests {
         store.push_text("A").unwrap();
         store.push_text("B").unwrap();
         store.push_text("A").unwrap();
-        assert_eq!(store.get(10).unwrap().len(), 3);
+        assert_eq!(store.get(10).unwrap().len(), 2);
     }
 
     #[test]
