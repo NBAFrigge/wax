@@ -7,6 +7,8 @@ pub struct Config {
     pub max_db_mb: u64,
     #[serde(default = "default_max_images_mb")]
     pub max_images_mb: u64,
+    #[serde(default)]
+    pub ttl_secs: Option<u64>,
 }
 
 fn default_max_db_mb() -> u64 {
@@ -22,6 +24,7 @@ impl Default for Config {
         Self {
             max_db_mb: default_max_db_mb(),
             max_images_mb: default_max_images_mb(),
+            ttl_secs: None,
         }
     }
 }

@@ -21,6 +21,7 @@ pub struct Clip {
 pub struct Limits {
     pub max_db_bytes: u64,
     pub max_images_bytes: u64,
+    pub ttl_secs: Option<u64>,
 }
 
 impl Default for Limits {
@@ -28,6 +29,7 @@ impl Default for Limits {
         Self {
             max_db_bytes: u64::MAX,
             max_images_bytes: u64::MAX,
+            ttl_secs: None,
         }
     }
 }
@@ -271,6 +273,53 @@ impl ClipStore {
         Ok(())
     }
 
+    fn check_expire(&self) -> Result<(), Box<dyn std::error::Error>> {
+        let ttl_secs = match self.limits.ttl_secs {
+            Some(t) => t,
+            None => return Ok(()),
+        };
+        let cutoff = now_micros().saturating_sub(ttl_secs * 1_000_000);
+
+        let txn = self.db.begin_write()?;
+        {
+            let mut history = txn.open_table(HISTORY)?;
+            let mut clips = txn.open_table(CLIPS)?;
+
+            let to_remove: Vec<(u64, u64)> = history
+                .range(..cutoff)?
+                .filter_map(|e| {
+                    let (k, v) = e.ok()?;
+                    Some((k.value(), v.value()))
+                })
+                .collect();
+
+            for (ts, _) in &to_remove {
+                history.remove(ts)?;
+            }
+
+            let still_referenced: std::collections::HashSet<u64> = history
+                .iter()?
+                .filter_map(|e| e.ok().map(|(_, v)| v.value()))
+                .collect();
+
+            for (_, hash) in &to_remove {
+                if !still_referenced.contains(hash) {
+                    if let Ok(Some(data)) = clips.get(hash) {
+                        if let Ok(clip) = bincode::deserialize::<Clip>(data.value()) {
+                            if let ClipContent::Image(path) = clip.content {
+                                std::fs::remove_file(&path).ok();
+                            }
+                        }
+                    }
+                    clips.remove(hash)?;
+                }
+            }
+        }
+        txn.commit()?;
+        self.rebuild_cache();
+        Ok(())
+    }
+
     fn enforce_limits(&self) {
         let db_size = std::fs::metadata(&self.db_path)
             .map(|m| m.len())
@@ -282,6 +331,10 @@ impl ClipStore {
         let images_size = dir_size(&self.images_dir);
         if images_size > self.limits.max_images_bytes {
             self.trim_oldest(50).ok();
+        }
+
+        if self.limits.ttl_secs != None {
+            self.check_expire().ok();
         }
     }
 
@@ -317,6 +370,29 @@ impl ClipStore {
         if std::fs::write(&tmp, &content).is_ok() {
             std::fs::rename(&tmp, cache_path()).ok();
         }
+    }
+
+    #[cfg(test)]
+    fn push_text_at(
+        &self,
+        text: &str,
+        timestamp_micros: u64,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let hash_key = xxh3_64(text.as_bytes());
+        let txn = self.db.begin_write()?;
+        {
+            let mut clips = txn.open_table(CLIPS)?;
+            let mut history = txn.open_table(HISTORY)?;
+            if clips.get(hash_key)?.is_none() {
+                let bytes = bincode::serialize(&Clip {
+                    content: ClipContent::Text(text.to_string()),
+                })?;
+                clips.insert(hash_key, bytes.as_slice())?;
+            }
+            history.insert(timestamp_micros, hash_key)?;
+        }
+        txn.commit()?;
+        Ok(())
     }
 
     pub fn clear(&self) -> Result<(), redb::Error> {
@@ -507,6 +583,7 @@ mod tests {
             Limits {
                 max_db_bytes: 1,
                 max_images_bytes: u64::MAX,
+                ttl_secs: None,
             },
         )
         .unwrap();
@@ -514,5 +591,63 @@ mod tests {
             store.push_text(&format!("entry {}", i)).unwrap();
         }
         assert!(store.get(100).unwrap().len() < 60);
+    }
+
+    fn temp_store_with_ttl(ttl_secs: u64) -> ClipStore {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static N: AtomicU64 = AtomicU64::new(0);
+        ClipStore::open(
+            format!(
+                "/tmp/wax_ttl_{}_{}.redb",
+                now_micros(),
+                N.fetch_add(1, Ordering::Relaxed)
+            ),
+            Limits {
+                max_db_bytes: u64::MAX,
+                max_images_bytes: u64::MAX,
+                ttl_secs: Some(ttl_secs),
+            },
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn test_ttl_removes_old_entries() {
+        let store = temp_store_with_ttl(60);
+        let old_ts = now_micros() - 120 * 1_000_000; // 2 minuti fa
+        store.push_text_at("old entry", old_ts).unwrap();
+        store.check_expire().unwrap();
+        assert!(store.get(10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_ttl_keeps_recent_entries() {
+        let store = temp_store_with_ttl(60);
+        let recent_ts = now_micros() - 10 * 1_000_000; // 10 secondi fa
+        store.push_text_at("recent entry", recent_ts).unwrap();
+        store.check_expire().unwrap();
+        assert_eq!(store.get(10).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_ttl_mixed_old_and_new() {
+        let store = temp_store_with_ttl(60);
+        let old_ts = now_micros() - 120 * 1_000_000;
+        let recent_ts = now_micros() - 10 * 1_000_000;
+        store.push_text_at("old", old_ts).unwrap();
+        store.push_text_at("recent", recent_ts).unwrap();
+        store.check_expire().unwrap();
+        let results = store.get(10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert!(matches!(&results[0].content, ClipContent::Text(t) if t == "recent"));
+    }
+
+    #[test]
+    fn test_ttl_none_does_not_expire() {
+        let store = temp_store(); // ttl_secs: None
+        let old_ts = now_micros() - 999 * 1_000_000;
+        store.push_text_at("old entry", old_ts).unwrap();
+        store.check_expire().unwrap();
+        assert_eq!(store.get(10).unwrap().len(), 1);
     }
 }

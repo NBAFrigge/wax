@@ -34,6 +34,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let limits = wax_store::Limits {
         max_db_bytes: config.max_db_mb * 1024 * 1024,
         max_images_bytes: config.max_images_mb * 1024 * 1024,
+        ttl_secs: config.ttl_secs,
     };
 
     let db_path = wax_store::default_db_path();
