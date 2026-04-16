@@ -1,6 +1,7 @@
 mod config;
 mod state;
 
+use regex::RegexSet;
 use state::State;
 use std::io::{BufRead, BufReader, Write};
 use std::os::fd::AsFd;
@@ -21,7 +22,9 @@ fn open_store_with_retry(
         match ClipStore::open(path, limits.clone()) {
             Ok(store) => return Ok(store),
             Err(e) => {
-                if attempt == 0 { warn!("db locked, retrying: {}", e); }
+                if attempt == 0 {
+                    warn!("db locked, retrying: {}", e);
+                }
                 std::thread::sleep(std::time::Duration::from_millis(500));
             }
         }
@@ -52,6 +55,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         max_images_bytes: config.max_images_mb * 1024 * 1024,
         ttl_secs: config.ttl_secs,
     };
+
+    let regex_exclude = regex::RegexSet::new(config.excluded_pattern)?;
 
     let db_path = wax_store::default_db_path();
     let store = Arc::new(open_store_with_retry(&db_path, &limits)?);
@@ -141,7 +146,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 continue;
             };
 
-            if let Err(e) = handle_offer(offer, mime, &mut event_queue, &store) {
+            if let Err(e) = handle_offer(offer, mime, &mut event_queue, &store, &regex_exclude) {
                 warn!("failed to handle clipboard offer: {}", e);
             }
 
@@ -161,6 +166,7 @@ fn handle_offer(
     mime: &str,
     event_queue: &mut EventQueue<State>,
     store: &ClipStore,
+    regex_set: &RegexSet,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let (fd_read, fd_write) = rustix::pipe::pipe()?;
     offer.receive(mime.to_string(), fd_write.as_fd());
@@ -174,8 +180,12 @@ fn handle_offer(
     match mime {
         "text/plain" => {
             let text = String::from_utf8_lossy(&buffer);
-            store.push_text(text.trim())?;
-            info!("saved text: {} bytes", buffer.len());
+            if !regex_set.is_match(&text) {
+                store.push_text(text.trim())?;
+                info!("saved text: {} bytes", buffer.len());
+            } else {
+                info!("text skipped")
+            }
         }
         "image/png" => {
             store.push_image(&buffer)?;

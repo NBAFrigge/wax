@@ -9,6 +9,8 @@ pub struct Config {
     pub max_images_mb: u64,
     #[serde(default)]
     pub ttl_secs: Option<u64>,
+    #[serde(default)]
+    pub excluded_pattern: Vec<String>,
 }
 
 fn default_max_db_mb() -> u64 {
@@ -25,6 +27,7 @@ impl Default for Config {
             max_db_mb: default_max_db_mb(),
             max_images_mb: default_max_images_mb(),
             ttl_secs: None,
+            excluded_pattern: Vec::new(),
         }
     }
 }
