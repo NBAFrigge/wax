@@ -17,5 +17,7 @@ clap = { version = "4", default-features = false, features = [
 dirs = "6"
 wax-ipc = { path = "../wax-ipc" }
 wax-store = { path = "../wax-store" }
+serde = { workspace = true }
+toml = "0.8"
 serde_json = "1"
 libc = "0.2"

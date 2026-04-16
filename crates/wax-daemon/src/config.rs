@@ -11,6 +11,14 @@ pub struct Config {
     pub ttl_secs: Option<u64>,
     #[serde(default)]
     pub excluded_pattern: Vec<String>,
+    #[serde(default = "default_true")]
+    pub clipboard: bool,
+    #[serde(default)]
+    pub primary_selection: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn default_max_db_mb() -> u64 {
@@ -28,6 +36,8 @@ impl Default for Config {
             max_images_mb: default_max_images_mb(),
             ttl_secs: None,
             excluded_pattern: Vec::new(),
+            clipboard: true,
+            primary_selection: false,
         }
     }
 }
@@ -51,9 +61,21 @@ impl Config {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).ok();
         }
+        let excluded = if self.excluded_pattern.is_empty() {
+            "# excluded_pattern = [\"password\", \"secret.*\"]".to_string()
+        } else {
+            format!(
+                "excluded_pattern = [{}]",
+                self.excluded_pattern.iter().map(|p| format!("\"{}\"", p)).collect::<Vec<_>>().join(", ")
+            )
+        };
+        let ttl = match self.ttl_secs {
+            Some(s) => format!("ttl_secs = {}", s),
+            None => "# ttl_secs = 604800  # 7 days".to_string(),
+        };
         let content = format!(
-            "max_db_mb = {}\nmax_images_mb = {}\n",
-            self.max_db_mb, self.max_images_mb
+            "max_db_mb = {}\nmax_images_mb = {}\n{}\n\nclipboard = {}\nprimary_selection = {}\n\n{}\n",
+            self.max_db_mb, self.max_images_mb, ttl, self.clipboard, self.primary_selection, excluded
         );
         std::fs::write(path, content).ok();
     }

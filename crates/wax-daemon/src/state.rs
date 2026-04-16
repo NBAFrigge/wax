@@ -98,7 +98,9 @@ impl Dispatch<ZwlrDataControlDeviceV1, ()> for State {
             zwlr_data_control_device_v1::Event::Selection { id } => {
                 state.current_offer = id;
             }
-            zwlr_data_control_device_v1::Event::PrimarySelection { .. } => {}
+            zwlr_data_control_device_v1::Event::PrimarySelection { id } => {
+                state.current_offer = id;
+            }
             zwlr_data_control_device_v1::Event::Finished => {}
             _ => {}
         }

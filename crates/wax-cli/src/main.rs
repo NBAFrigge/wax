@@ -1,3 +1,5 @@
+mod config;
+
 use clap::{Parser, Subcommand, ValueEnum};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::net::UnixStream;
@@ -14,8 +16,8 @@ struct Cli {
 #[derive(Subcommand)]
 enum Cmd {
     Pick {
-        #[arg(short, long, default_value_t = 50)]
-        limit: usize,
+        #[arg(short, long)]
+        limit: Option<usize>,
         #[arg(long, value_enum)]
         picker: Option<PickerKind>,
         #[arg(long, default_value_t = false)]
@@ -44,7 +46,7 @@ struct PickerEntry {
 }
 
 impl PickerEntry {
-    fn from_clip(clip: &str) -> Self {
+    fn from_clip(clip: &str, max_display_len: usize) -> Self {
         if let Some(path) = clip.strip_prefix("[img] ") {
             let dims = match png_dimensions(path) {
                 Some((w, h)) => format!("{}×{}", w, h),
@@ -57,10 +59,20 @@ impl PickerEntry {
                 (true, false) => format!("[img] {}", time),
                 (true, true) => "[img]".to_string(),
             };
-            PickerEntry { display, icon_path: Some(path.to_string()), original: clip.to_string() }
-        } else {
             PickerEntry {
-                display: clip.replace('\n', "↵"),
+                display,
+                icon_path: Some(path.to_string()),
+                original: clip.to_string(),
+            }
+        } else {
+            let display = clip.replace('\n', " ");
+            let display = if display.len() > max_display_len {
+                format!("{}…", &display[..max_display_len])
+            } else {
+                display
+            };
+            PickerEntry {
+                display,
                 icon_path: None,
                 original: clip.to_string(),
             }
@@ -100,11 +112,22 @@ impl Picker {
     }
 
     fn spawn(&self, entries: &[PickerEntry]) -> Option<String> {
-        let input = entries.iter().map(|e| self.format_entry(e)).collect::<Vec<_>>().join("\n");
+        let input = entries
+            .iter()
+            .map(|e| self.format_entry(e))
+            .collect::<Vec<_>>()
+            .join("\n");
 
         let mut child = match self {
             Picker::Wofi => Command::new("wofi")
-                .args(["--show", "dmenu", "--prompt", "clipboard", "--no-markup", "--allow-images"])
+                .args([
+                    "--show",
+                    "dmenu",
+                    "--prompt",
+                    "clipboard",
+                    "--no-markup",
+                    "--allow-images",
+                ])
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .spawn()
@@ -131,7 +154,10 @@ impl Picker {
                     cmd.arg("-theme").arg(theme);
                 }
 
-                cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().ok()?
+                cmd.stdin(Stdio::piped())
+                    .stdout(Stdio::piped())
+                    .spawn()
+                    .ok()?
             }
         };
 
@@ -152,7 +178,10 @@ impl Picker {
             selected
         };
 
-        entries.iter().find(|e| e.display == display).map(|e| e.original.clone())
+        entries
+            .iter()
+            .find(|e| e.display == display)
+            .map(|e| e.original.clone())
     }
 }
 
@@ -162,12 +191,25 @@ struct ActiveWindow {
 }
 
 const TERMINAL_CLASSES: &[&str] = &[
-    "kitty", "alacritty", "foot", "wezterm", "gnome-terminal", "konsole",
-    "xterm", "urxvt", "st", "termite", "tilix", "hyper",
+    "kitty",
+    "alacritty",
+    "foot",
+    "wezterm",
+    "gnome-terminal",
+    "konsole",
+    "xterm",
+    "urxvt",
+    "st",
+    "termite",
+    "tilix",
+    "hyper",
 ];
 
 fn active_window() -> Option<ActiveWindow> {
-    let output = Command::new("hyprctl").args(["activewindow", "-j"]).output().ok()?;
+    let output = Command::new("hyprctl")
+        .args(["activewindow", "-j"])
+        .output()
+        .ok()?;
     let json = String::from_utf8(output.stdout).ok()?;
 
     let addr_start = json.find("\"address\": \"")? + "\"address\": \"".len();
@@ -179,7 +221,10 @@ fn active_window() -> Option<ActiveWindow> {
     let class = json[class_start..class_end].to_lowercase();
     let is_terminal = TERMINAL_CLASSES.iter().any(|&t| class.contains(t));
 
-    Some(ActiveWindow { address, is_terminal })
+    Some(ActiveWindow {
+        address,
+        is_terminal,
+    })
 }
 
 fn active_window_address() -> Option<String> {
@@ -206,7 +251,9 @@ fn focus_window_and_wait(address: &str) {
 
 fn wtype_paste(is_terminal: bool) -> Result<(), Box<dyn std::error::Error>> {
     let args: &[&str] = if is_terminal {
-        &["-M", "ctrl", "-M", "shift", "-k", "v", "-m", "shift", "-m", "ctrl"]
+        &[
+            "-M", "ctrl", "-M", "shift", "-k", "v", "-m", "shift", "-m", "ctrl",
+        ]
     } else {
         &["-M", "ctrl", "-k", "v", "-m", "ctrl"]
     };
@@ -221,11 +268,19 @@ fn set_clipboard(clip: &str) -> Result<(), Box<dyn std::error::Error>> {
             .args(["--type", "image/png"])
             .stdin(Stdio::piped())
             .spawn()?;
-        child.stdin.as_mut().ok_or("wl-copy stdin unavailable")?.write_all(&data)?;
+        child
+            .stdin
+            .as_mut()
+            .ok_or("wl-copy stdin unavailable")?
+            .write_all(&data)?;
         child.wait()?;
     } else {
         let mut child = Command::new("wl-copy").stdin(Stdio::piped()).spawn()?;
-        child.stdin.as_mut().ok_or("wl-copy stdin unavailable")?.write_all(clip.as_bytes())?;
+        child
+            .stdin
+            .as_mut()
+            .ok_or("wl-copy stdin unavailable")?
+            .write_all(clip.as_bytes())?;
         child.wait()?;
     }
     Ok(())
@@ -244,8 +299,13 @@ fn get_clips(n: usize) -> Result<Vec<String>, Box<dyn std::error::Error>> {
 
 fn send(req: &Request) -> Result<Response, Box<dyn std::error::Error>> {
     let socket = wax_ipc::socket_path();
-    let stream = UnixStream::connect(&socket)
-        .map_err(|e| format!("cannot connect to wax daemon at {}: {}", socket.display(), e))?;
+    let stream = UnixStream::connect(&socket).map_err(|e| {
+        format!(
+            "cannot connect to wax daemon at {}: {}",
+            socket.display(),
+            e
+        )
+    })?;
     let mut writer = &stream;
     let mut reader = BufReader::new(&stream);
 
@@ -286,7 +346,8 @@ fn file_time_label_inner(path: &str) -> Option<String> {
     let offset = local_utc_offset_secs();
     let mtime = std::fs::metadata(path).and_then(|m| m.modified()).ok()?;
     let mtime_secs = (mtime.duration_since(UNIX_EPOCH).ok()?.as_secs() as i64 + offset) as u64;
-    let now_secs = (SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs() as i64 + offset) as u64;
+    let now_secs =
+        (SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs() as i64 + offset) as u64;
 
     let today_start = now_secs - (now_secs % 86400);
     let mtime_day = mtime_secs - (mtime_secs % 86400);
@@ -315,11 +376,12 @@ fn epoch_secs_to_date(secs: u64) -> (u64, u64) {
     let mut remaining = secs / 86400;
     let mut y = 1970u64;
     loop {
-        let days_in_year = if (y.is_multiple_of(4) && !y.is_multiple_of(100)) || y.is_multiple_of(400) {
-            366
-        } else {
-            365
-        };
+        let days_in_year =
+            if (y.is_multiple_of(4) && !y.is_multiple_of(100)) || y.is_multiple_of(400) {
+                366
+            } else {
+                365
+            };
         if remaining < days_in_year {
             break;
         }
@@ -344,18 +406,21 @@ fn epoch_secs_to_date(secs: u64) -> (u64, u64) {
 }
 
 fn pick(
-    limit: usize,
+    limit: Option<usize>,
     picker_override: Option<PickerKind>,
     instant_paste: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let clips = get_clips(limit)?;
+    let cfg = config::Config::load();
+    let clips = get_clips(limit.unwrap_or(cfg.limit))?;
     if clips.is_empty() {
         return Ok(());
     }
-
     let prev_window = if instant_paste { active_window() } else { None };
 
-    let entries: Vec<PickerEntry> = clips.iter().map(|c| PickerEntry::from_clip(c)).collect();
+    let entries: Vec<PickerEntry> = clips
+        .iter()
+        .map(|c| PickerEntry::from_clip(c, cfg.max_display_len))
+        .collect();
     let picker = match picker_override {
         Some(kind) => Picker::from_kind(kind),
         None => Picker::detect()?,
@@ -381,8 +446,16 @@ fn pick(
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
-    match cli.command.unwrap_or(Cmd::Pick { limit: 50, picker: None, instant_paste: false }) {
-        Cmd::Pick { limit, picker, instant_paste } => pick(limit, picker, instant_paste)?,
+    match cli.command.unwrap_or(Cmd::Pick {
+        limit: None,
+        picker: None,
+        instant_paste: false,
+    }) {
+        Cmd::Pick {
+            limit,
+            picker,
+            instant_paste,
+        } => pick(limit, picker, instant_paste)?,
 
         Cmd::List { n } => {
             let clips = get_clips(n)?;
