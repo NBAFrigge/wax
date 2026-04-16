@@ -2,6 +2,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::process::{Command, Stdio};
+use std::time::Instant;
 use wax_ipc::{Request, Response};
 
 #[derive(Parser)]
@@ -18,6 +19,8 @@ enum Cmd {
         limit: usize,
         #[arg(long, value_enum)]
         picker: Option<PickerKind>,
+        #[arg(long, default_value_t = false)]
+        instant_paste: bool,
     },
     List {
         #[arg(default_value_t = 50)]
@@ -326,6 +329,7 @@ fn get_clips(n: usize) -> Result<Vec<String>, Box<dyn std::error::Error>> {
 fn pick(
     limit: usize,
     picker_override: Option<PickerKind>,
+    instant_paste: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let clips = get_clips(limit)?;
 
@@ -343,7 +347,14 @@ fn pick(
         return Ok(());
     };
 
-    set_clipboard(&original)
+    set_clipboard(&original)?;
+    if instant_paste {
+        Command::new("wtype")
+            .args(["-k", "ctrl+v"])
+            .spawn()?
+            .wait()?;
+    }
+    Ok(())
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -352,8 +363,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     match cli.command.unwrap_or(Cmd::Pick {
         limit: 50,
         picker: None,
+        instant_paste: false,
     }) {
-        Cmd::Pick { limit, picker } => pick(limit, picker)?,
+        Cmd::Pick {
+            limit,
+            picker,
+            instant_paste,
+        } => pick(limit, picker, instant_paste)?,
 
         Cmd::List { n } => {
             let clips = get_clips(n)?;
