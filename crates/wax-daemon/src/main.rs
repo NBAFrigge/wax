@@ -9,9 +9,25 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tracing::{error, info, warn};
 use wax_ipc::{Request, Response};
-use wax_store::{ClipContent, ClipStore};
+use wax_store::{ClipContent, ClipStore, Limits};
 use wayland_client::{Connection, EventQueue};
 use wayland_protocols_wlr::data_control::v1::client::zwlr_data_control_offer_v1::ZwlrDataControlOfferV1;
+
+fn open_store_with_retry(
+    path: &std::path::Path,
+    limits: Limits,
+) -> Result<ClipStore, Box<dyn std::error::Error>> {
+    for attempt in 0..10 {
+        match ClipStore::open(path, limits.clone()) {
+            Ok(store) => return Ok(store),
+            Err(e) => {
+                if attempt == 0 { warn!("db locked, retrying: {}", e); }
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
+        }
+    }
+    Err("could not open database after 10 attempts".into())
+}
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
@@ -38,7 +54,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let db_path = wax_store::default_db_path();
-    let store = Arc::new(ClipStore::open(&db_path, limits)?);
+    let store = Arc::new(open_store_with_retry(&db_path, limits)?);
     info!("wax daemon started, db: {}", db_path.display());
 
     let socket_path = wax_ipc::socket_path();
