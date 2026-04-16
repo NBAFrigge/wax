@@ -141,8 +141,7 @@ impl ClipStore {
             let mut history = txn.open_table(HISTORY)?;
 
             let last_hash = history.last()?.map(|e| e.1.value());
-            let already_exists = clips.get(hash_key)?.is_some();
-            inserted = last_hash != Some(hash_key) && !already_exists;
+            inserted = last_hash != Some(hash_key) && clips.get(hash_key)?.is_none();
 
             if inserted {
                 let bytes = bincode::serialize(&clip)?;

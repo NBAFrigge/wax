@@ -15,7 +15,7 @@ use wayland_protocols_wlr::data_control::v1::client::zwlr_data_control_offer_v1:
 
 fn open_store_with_retry(
     path: &std::path::Path,
-    limits: Limits,
+    limits: &Limits,
 ) -> Result<ClipStore, Box<dyn std::error::Error>> {
     for attempt in 0..10 {
         match ClipStore::open(path, limits.clone()) {
@@ -54,7 +54,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let db_path = wax_store::default_db_path();
-    let store = Arc::new(open_store_with_retry(&db_path, limits)?);
+    let store = Arc::new(open_store_with_retry(&db_path, &limits)?);
     info!("wax daemon started, db: {}", db_path.display());
 
     let socket_path = wax_ipc::socket_path();
