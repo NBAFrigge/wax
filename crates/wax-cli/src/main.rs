@@ -127,6 +127,8 @@ impl Picker {
                     "clipboard",
                     "--no-markup",
                     "--allow-images",
+                    "--matching",
+                    "fuzzy",
                 ])
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
@@ -135,7 +137,7 @@ impl Picker {
 
             Picker::Rofi => {
                 let mut cmd = Command::new("rofi");
-                cmd.args(["-dmenu", "-p", "clipboard", "-show-icons"]);
+                cmd.args(["-dmenu", "-p", "clipboard", "-show-icons", "-matching", "fuzzy"]);
 
                 let image_indices: Vec<String> = entries
                     .iter()
