@@ -127,7 +127,7 @@ impl Picker {
                 }
             }
             Picker::Rofi => {
-                let icon = if entry.is_pinned && entry.icon_path.is_none() {
+                let icon = if entry.is_pinned {
                     pin_icon
                 } else {
                     entry.icon_path.as_deref().unwrap_or("")

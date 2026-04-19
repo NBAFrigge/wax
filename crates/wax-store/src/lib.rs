@@ -252,9 +252,11 @@ impl ClipStore {
 
             let mut clips = txn.open_table(CLIPS)?;
             let mut history = txn.open_table(HISTORY)?;
+            let mut pinned = txn.open_table(PINNED)?;
 
             for hash in &to_remove {
                 clips.remove(hash)?;
+                pinned.remove(hash)?;
             }
             let ts_to_remove: Vec<u64> = history
                 .iter()?
