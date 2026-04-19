@@ -6,6 +6,10 @@ pub struct Config {
     pub max_display_len: usize,
     #[serde(default = "default_limit")]
     pub limit: usize,
+    #[serde(default = "default_pin_key")]
+    pub pin_key: String,
+    #[serde(default = "default_pin_icon")]
+    pub pin_icon: String,
 }
 
 fn default_max_display_len() -> usize {
@@ -16,11 +20,21 @@ fn default_limit() -> usize {
     50
 }
 
+fn default_pin_key() -> String {
+    "alt+p".to_string()
+}
+
+fn default_pin_icon() -> String {
+    "view-pin-symbolic".to_string()
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
             max_display_len: default_max_display_len(),
             limit: default_limit(),
+            pin_key: default_pin_key(),
+            pin_icon: default_pin_icon(),
         }
     }
 }

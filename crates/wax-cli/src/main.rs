@@ -30,6 +30,12 @@ enum Cmd {
     Delete {
         text: String,
     },
+    Pin {
+        text: String,
+    },
+    Unpin {
+        text: String,
+    },
     Clear,
 }
 
@@ -43,10 +49,11 @@ struct PickerEntry {
     display: String,
     icon_path: Option<String>,
     original: String,
+    is_pinned: bool,
 }
 
 impl PickerEntry {
-    fn from_clip(clip: &str, max_display_len: usize) -> Self {
+    fn from_clip(clip: &str, max_display_len: usize, is_pinned: bool) -> Self {
         if let Some(path) = clip.strip_prefix("[img] ") {
             let dims = match png_dimensions(path) {
                 Some((w, h)) => format!("{}×{}", w, h),
@@ -63,6 +70,7 @@ impl PickerEntry {
                 display,
                 icon_path: Some(path.to_string()),
                 original: clip.to_string(),
+                is_pinned,
             }
         } else {
             let display = clip.replace('\n', " ");
@@ -75,9 +83,15 @@ impl PickerEntry {
                 display,
                 icon_path: None,
                 original: clip.to_string(),
+                is_pinned,
             }
         }
     }
+}
+
+enum PickAction {
+    Copy,
+    Pin,
 }
 
 enum Picker {
@@ -103,18 +117,34 @@ impl Picker {
         }
     }
 
-    fn format_entry(&self, entry: &PickerEntry) -> String {
-        match (&self, &entry.icon_path) {
-            (Picker::Wofi, Some(path)) => format!("img:{}\t{}", path, entry.display),
-            (Picker::Rofi, Some(path)) => format!("{}\0icon\x1f{}", entry.display, path),
-            _ => entry.display.clone(),
+    fn format_entry(&self, entry: &PickerEntry, pin_icon: &str) -> String {
+        match self {
+            Picker::Wofi => {
+                let prefix = if entry.is_pinned { "📌 " } else { "" };
+                match &entry.icon_path {
+                    Some(path) => format!("img:{}\t{}{}", path, prefix, entry.display),
+                    None => format!("{}{}", prefix, entry.display),
+                }
+            }
+            Picker::Rofi => {
+                let icon = if entry.is_pinned && entry.icon_path.is_none() {
+                    pin_icon
+                } else {
+                    entry.icon_path.as_deref().unwrap_or("")
+                };
+                if icon.is_empty() {
+                    entry.display.clone()
+                } else {
+                    format!("{}\0icon\x1f{}", entry.display, icon)
+                }
+            }
         }
     }
 
-    fn spawn(&self, entries: &[PickerEntry]) -> Option<String> {
+    fn spawn(&self, entries: &[PickerEntry], pin_key: &str, pin_icon: &str) -> Option<(String, PickAction)> {
         let input = entries
             .iter()
-            .map(|e| self.format_entry(e))
+            .map(|e| self.format_entry(e, pin_icon))
             .collect::<Vec<_>>()
             .join("\n");
 
@@ -137,7 +167,18 @@ impl Picker {
 
             Picker::Rofi => {
                 let mut cmd = Command::new("rofi");
-                cmd.args(["-dmenu", "-p", "clipboard", "-show-icons", "-matching", "fuzzy"]);
+                cmd.args([
+                    "-dmenu",
+                    "-p",
+                    "clipboard",
+                    "-show-icons",
+                    "-matching",
+                    "fuzzy",
+                    "-kb-custom-1",
+                    pin_key,
+                    "-mesg",
+                    &format!("{}: pin/unpin", pin_key),
+                ]);
 
                 let image_indices: Vec<String> = entries
                     .iter()
@@ -166,6 +207,7 @@ impl Picker {
         child.stdin.as_mut()?.write_all(input.as_bytes()).ok()?;
 
         let output = child.wait_with_output().ok()?;
+        let exit_code = output.status.code().unwrap_or(0);
         let raw = String::from_utf8(output.stdout).ok()?;
         let selected = raw.trim();
         if selected.is_empty() {
@@ -180,10 +222,18 @@ impl Picker {
             selected
         };
 
-        entries
+        let original = entries
             .iter()
             .find(|e| e.display == display)
-            .map(|e| e.original.clone())
+            .map(|e| e.original.clone())?;
+
+        let action = if exit_code == 10 {
+            PickAction::Pin
+        } else {
+            PickAction::Copy
+        };
+
+        Some((original, action))
     }
 }
 
@@ -419,27 +469,44 @@ fn pick(
     }
     let prev_window = if instant_paste { active_window() } else { None };
 
+    let pinned_set: std::collections::HashSet<String> = match send(&Request::GetPinned)? {
+        Response::Clips(v) => v.into_iter().collect(),
+        _ => std::collections::HashSet::new(),
+    };
+
     let entries: Vec<PickerEntry> = clips
         .iter()
-        .map(|c| PickerEntry::from_clip(c, cfg.max_display_len))
+        .map(|c| PickerEntry::from_clip(c, cfg.max_display_len, pinned_set.contains(c.as_str())))
         .collect();
     let picker = match picker_override {
         Some(kind) => Picker::from_kind(kind),
         None => Picker::detect()?,
     };
 
-    let Some(original) = picker.spawn(&entries) else {
+    let Some((original, action)) = picker.spawn(&entries, &cfg.pin_key, &cfg.pin_icon) else {
         return Ok(());
     };
 
-    set_clipboard(&original)?;
-
-    if instant_paste {
-        let is_terminal = prev_window.as_ref().map(|w| w.is_terminal).unwrap_or(false);
-        if let Some(ref w) = prev_window {
-            focus_window_and_wait(&w.address);
+    match action {
+        PickAction::Pin => {
+            if pinned_set.contains(&original) {
+                send(&Request::Unpin { text: original })?;
+            } else {
+                send(&Request::Pin { text: original })?;
+            }
         }
-        wtype_paste(is_terminal)?;
+        PickAction::Copy => {
+            set_clipboard(&original)?;
+
+            if instant_paste {
+                let is_terminal =
+                    prev_window.as_ref().map(|w| w.is_terminal).unwrap_or(false);
+                if let Some(ref w) = prev_window {
+                    focus_window_and_wait(&w.address);
+                }
+                wtype_paste(is_terminal)?;
+            }
+        }
     }
 
     Ok(())
@@ -465,6 +532,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         Cmd::Delete { text } => match send(&Request::Delete { text })? {
+            Response::Ok => {}
+            Response::Error(e) => return Err(e.into()),
+            _ => return Err("unexpected response".into()),
+        },
+
+        Cmd::Pin { text } => match send(&Request::Pin { text })? {
+            Response::Ok => {}
+            Response::Error(e) => return Err(e.into()),
+            _ => return Err("unexpected response".into()),
+        },
+
+        Cmd::Unpin { text } => match send(&Request::Unpin { text })? {
             Response::Ok => {}
             Response::Error(e) => return Err(e.into()),
             _ => return Err("unexpected response".into()),

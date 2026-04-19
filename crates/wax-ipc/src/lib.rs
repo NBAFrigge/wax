@@ -12,6 +12,9 @@ pub fn socket_path() -> PathBuf {
 pub enum Request {
     Get { n: usize },
     Delete { text: String },
+    Pin { text: String },
+    Unpin { text: String },
+    GetPinned,
     Clear,
 }
 

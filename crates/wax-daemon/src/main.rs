@@ -88,18 +88,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     return;
                 }
 
+                let clips_to_strings = |clips: Vec<wax_store::Clip>| {
+                    clips
+                        .into_iter()
+                        .map(|c| match c.content {
+                            ClipContent::Text(t) => t,
+                            ClipContent::Image(p) => format!("[img] {}", p),
+                        })
+                        .collect()
+                };
+
                 let response = match serde_json::from_str::<Request>(line.trim()) {
                     Ok(Request::Get { n }) => match store.get(n) {
-                        Ok(clips) => {
-                            let strings: Vec<String> = clips
-                                .into_iter()
-                                .map(|c| match c.content {
-                                    ClipContent::Text(t) => t,
-                                    ClipContent::Image(p) => format!("[img] {}", p),
-                                })
-                                .collect();
-                            Response::Clips(strings)
-                        }
+                        Ok(clips) => Response::Clips(clips_to_strings(clips)),
+                        Err(e) => Response::Error(e.to_string()),
+                    },
+                    Ok(Request::GetPinned) => match store.get_pinned_clips() {
+                        Ok(clips) => Response::Clips(clips_to_strings(clips)),
                         Err(e) => Response::Error(e.to_string()),
                     },
                     Ok(Request::Delete { text }) => {
@@ -113,6 +118,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             Err(e) => Response::Error(e.to_string()),
                         }
                     }
+                    Ok(Request::Pin { text }) => match store.pin_text(&text) {
+                        Ok(_) => Response::Ok,
+                        Err(e) => Response::Error(e.to_string()),
+                    },
+                    Ok(Request::Unpin { text }) => match store.unpin_text(&text) {
+                        Ok(_) => Response::Ok,
+                        Err(e) => Response::Error(e.to_string()),
+                    },
                     Ok(Request::Clear) => match store.clear() {
                         Ok(_) => Response::Ok,
                         Err(e) => Response::Error(e.to_string()),
