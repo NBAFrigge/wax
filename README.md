@@ -1,16 +1,6 @@
 # wax
 
-Fast Wayland clipboard manager. Stores text and images, picked via rofi or wofi.
-
-```
-Benchmark 1: wax list
-  Time (mean ± σ):   2.0 ms ±   0.7 ms    [User: 0.9 ms, System: 0.9 ms]
-
-Benchmark 2: cliphist list
-  Time (mean ± σ):   7.5 ms ±   1.5 ms    [User: 4.5 ms, System: 3.5 ms]
-
-Summary: wax list ran 3.79x faster than cliphist list
-```
+Fast Wayland clipboard manager. Stores text and images, picked via rofi or wofi. Faster and lighter than cliphist.
 
 ## Dependencies
 
@@ -74,6 +64,8 @@ primary_selection = false
 | `excluded_pattern` | `[]` | List of regex patterns — matching entries are not saved |
 | `max_display_len` | `50` | Max characters shown per entry in the picker |
 | `limit` | `50` | Number of entries shown by default in the picker |
+| `pin_key` | `alt+p` | Keybind to pin/unpin in rofi |
+| `pin_icon` | `view-pin-symbolic` | Icon shown for pinned entries in rofi |
 
 When a size limit is exceeded, the oldest entries are removed automatically.
 
@@ -84,7 +76,9 @@ wax              # open picker (default: last 50 entries)
 wax list [N]     # print last N entries (default: 50)
 wax pick         # open picker explicitly
 wax delete <x>   # delete entry matching <x>
-wax clear        # clear all history
+wax pin <x>      # pin entry (always shown at top)
+wax unpin <x>    # unpin entry
+wax clear        # clear all history (pinned entries are kept)
 ```
 
 ### Pick flags
