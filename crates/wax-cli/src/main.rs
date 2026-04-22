@@ -230,6 +230,11 @@ impl Picker {
             selected
         };
 
+        let display = match self {
+            Picker::Wofi => display.strip_prefix("📌 ").unwrap_or(display),
+            Picker::Rofi => display,
+        };
+
         let original = entries
             .iter()
             .find(|e| e.display == display)
