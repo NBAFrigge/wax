@@ -281,6 +281,7 @@ impl ClipStore {
         {
             let mut history = txn.open_table(HISTORY)?;
             let mut clips = txn.open_table(CLIPS)?;
+            let pinned = txn.open_table(PINNED)?;
 
             let to_remove: Vec<(u64, u64)> = history
                 .iter()?
@@ -300,8 +301,13 @@ impl ClipStore {
                 .filter_map(|e| e.ok().map(|(_, v)| v.value()))
                 .collect();
 
+            let pinned_hashes: std::collections::HashSet<u64> = pinned
+                .iter()?
+                .filter_map(|e| e.ok().map(|(k, _)| k.value()))
+                .collect();
+
             for (_, hash) in &to_remove {
-                if !still_referenced.contains(hash) {
+                if !still_referenced.contains(hash) && !pinned_hashes.contains(hash) {
                     if let Ok(Some(data)) = clips.get(hash) {
                         if let Ok(clip) = bincode::deserialize::<Clip>(data.value()) {
                             if let ClipContent::Image(path) = clip.content {
@@ -329,6 +335,7 @@ impl ClipStore {
         {
             let mut history = txn.open_table(HISTORY)?;
             let mut clips = txn.open_table(CLIPS)?;
+            let pinned = txn.open_table(PINNED)?;
 
             let to_remove: Vec<(u64, u64)> = history
                 .range(..cutoff)?
@@ -347,8 +354,13 @@ impl ClipStore {
                 .filter_map(|e| e.ok().map(|(_, v)| v.value()))
                 .collect();
 
+            let pinned_hashes: std::collections::HashSet<u64> = pinned
+                .iter()?
+                .filter_map(|e| e.ok().map(|(k, _)| k.value()))
+                .collect();
+
             for (_, hash) in &to_remove {
-                if !still_referenced.contains(hash) {
+                if !still_referenced.contains(hash) && !pinned_hashes.contains(hash) {
                     if let Ok(Some(data)) = clips.get(hash) {
                         if let Ok(clip) = bincode::deserialize::<Clip>(data.value()) {
                             if let ClipContent::Image(path) = clip.content {
