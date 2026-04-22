@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1776613403113,
+  "lastUpdate": 1776869424284,
   "repoUrl": "https://github.com/NBAFrigge/wax",
   "entries": {
     "Benchmark": [
@@ -1767,6 +1767,90 @@ window.BENCHMARK_DATA = {
             "name": "push_text/db_entries/1000",
             "value": 1231647,
             "range": "± 361091",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "frigerioalessandro659@gmail.com",
+            "name": "Frigge",
+            "username": "NBAFrigge"
+          },
+          "committer": {
+            "email": "frigerioalessandro659@gmail.com",
+            "name": "Frigge",
+            "username": "NBAFrigge"
+          },
+          "distinct": true,
+          "id": "a5e46971bd386c23697052b817c07aa6b253e6bc",
+          "message": "Trim_oldest bug on pinned clips fixed",
+          "timestamp": "2026-04-22T16:46:39+02:00",
+          "tree_id": "5f4c887bcca54776d1137e0b80492d5f3c50860f",
+          "url": "https://github.com/NBAFrigge/wax/commit/a5e46971bd386c23697052b817c07aa6b253e6bc"
+        },
+        "date": 1776869423914,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "read_cache/entries/50",
+            "value": 8372,
+            "range": "± 25",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "read_cache/entries/500",
+            "value": 9295,
+            "range": "± 15",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "read_cache/entries/5000",
+            "value": 14084,
+            "range": "± 33",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "read_cache/entries/50000",
+            "value": 75260,
+            "range": "± 370",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "get/db_entries/50",
+            "value": 9556,
+            "range": "± 17",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "get/db_entries/500",
+            "value": 13202,
+            "range": "± 5",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "get/db_entries/5000",
+            "value": 14488,
+            "range": "± 22",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "push_text/db_entries/0",
+            "value": 933588,
+            "range": "± 17057",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "push_text/db_entries/100",
+            "value": 1148475,
+            "range": "± 491349",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "push_text/db_entries/1000",
+            "value": 1133798,
+            "range": "± 53437",
             "unit": "ns/iter"
           }
         ]
