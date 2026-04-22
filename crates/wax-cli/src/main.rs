@@ -75,7 +75,10 @@ impl PickerEntry {
         } else {
             let display = clip.replace('\n', " ");
             let display = if display.len() > max_display_len {
-                format!("{}…", &display[..max_display_len])
+                format!(
+                    "{}…",
+                    &display.chars().take(max_display_len).collect::<String>()
+                )
             } else {
                 display
             };
@@ -141,7 +144,12 @@ impl Picker {
         }
     }
 
-    fn spawn(&self, entries: &[PickerEntry], pin_key: &str, pin_icon: &str) -> Option<(String, PickAction)> {
+    fn spawn(
+        &self,
+        entries: &[PickerEntry],
+        pin_key: &str,
+        pin_icon: &str,
+    ) -> Option<(String, PickAction)> {
         let input = entries
             .iter()
             .map(|e| self.format_entry(e, pin_icon))
@@ -499,8 +507,7 @@ fn pick(
             set_clipboard(&original)?;
 
             if instant_paste {
-                let is_terminal =
-                    prev_window.as_ref().map(|w| w.is_terminal).unwrap_or(false);
+                let is_terminal = prev_window.as_ref().map(|w| w.is_terminal).unwrap_or(false);
                 if let Some(ref w) = prev_window {
                     focus_window_and_wait(&w.address);
                 }
