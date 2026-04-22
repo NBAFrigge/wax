@@ -8,7 +8,6 @@ use std::os::fd::AsFd;
 use std::os::unix::net::UnixListener;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use tracing::{error, info, warn};
 use wax_ipc::{Request, Response};
 use wax_store::{ClipContent, ClipStore, Limits};
 use wayland_client::{Connection, EventQueue};
@@ -23,7 +22,7 @@ fn open_store_with_retry(
             Ok(store) => return Ok(store),
             Err(e) => {
                 if attempt == 0 {
-                    warn!("db locked, retrying: {}", e);
+                    eprintln!("db locked, retrying: {}", e);
                 }
                 std::thread::sleep(std::time::Duration::from_millis(500));
             }
@@ -33,8 +32,6 @@ fn open_store_with_retry(
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    tracing_subscriber::fmt::init();
-
     let connection = Connection::connect_to_env()?;
     let mut event_queue: EventQueue<State> = connection.new_event_queue();
     let qh = event_queue.handle();
@@ -60,7 +57,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let db_path = wax_store::default_db_path();
     let store = Arc::new(open_store_with_retry(&db_path, &limits)?);
-    info!("wax daemon started, db: {}", db_path.display());
+    eprintln!("wax daemon started, db: {}", db_path.display());
 
     let socket_path = wax_ipc::socket_path();
     let store_ipc = Arc::clone(&store);
@@ -69,7 +66,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     std::fs::remove_file(&socket_path).ok();
     let listener = UnixListener::bind(&socket_path)?;
-    info!("listening on {}", socket_path.display());
+    eprintln!("listening on {}", socket_path.display());
 
     std::thread::spawn(move || {
         for stream in listener.incoming() {
@@ -144,7 +141,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     loop {
         if let Err(e) = event_queue.blocking_dispatch(&mut state) {
-            error!("wayland dispatch error: {}", e);
+            eprintln!("wayland dispatch error: {}", e);
             break;
         }
 
@@ -172,7 +169,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
 
             if let Err(e) = handle_offer(offer, mime, &mut event_queue, &store, &regex_exclude) {
-                warn!("failed to handle clipboard offer: {}", e);
+                eprintln!("failed to handle clipboard offer: {}", e);
             }
 
             state.current_offer = None;
@@ -182,7 +179,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     running.store(false, Ordering::Relaxed);
     std::fs::remove_file(&socket_path).ok();
-    info!("wax daemon stopped");
+    eprintln!("wax daemon stopped");
     Ok(())
 }
 
@@ -207,14 +204,11 @@ fn handle_offer(
             let text = String::from_utf8_lossy(&buffer);
             if !regex_set.is_match(&text) {
                 store.push_text(text.trim())?;
-                info!("saved text: {} bytes", buffer.len());
             } else {
-                info!("text skipped")
             }
         }
         "image/png" => {
             store.push_image(&buffer)?;
-            info!("saved image: {} bytes", buffer.len());
         }
         _ => {}
     }

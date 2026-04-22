@@ -81,7 +81,9 @@ impl ClipStore {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).ok();
         }
-        let db = Database::create(&path)?;
+        let db = Database::builder()
+            .set_cache_size(256 * 1024)
+            .create(&path)?;
 
         let txn = db.begin_write()?;
         txn.open_table(CLIPS)?;
