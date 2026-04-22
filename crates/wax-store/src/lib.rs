@@ -118,8 +118,9 @@ impl ClipStore {
         let hash = xxh3_64(data);
         std::fs::create_dir_all(&self.images_dir)?;
         let path = self.images_dir.join(format!("{}.png", hash));
-        std::fs::write(&path, data)?;
-
+        if !path.exists() {
+            std::fs::write(&path, data)?;
+        }
         let path_str = path.to_string_lossy().into_owned();
         let changed = self.push(Clip {
             content: ClipContent::Image(path_str.clone()),
@@ -152,15 +153,11 @@ impl ClipStore {
                 history.insert(now_micros(), hash_key)?;
                 changed = true;
             } else {
-                let old_ts: Vec<u64> = history
-                    .iter()?
-                    .filter_map(|e| {
-                        let (k, v) = e.ok()?;
-                        (v.value() == hash_key).then_some(k.value())
-                    })
-                    .collect();
-                for ts in old_ts {
-                    history.remove(ts)?;
+                if let Some(old_ts) = history.iter()?.find_map(|e| {
+                    let (k, v) = e.ok()?;
+                    (v.value() == hash_key).then_some(k.value())
+                }) {
+                    history.remove(old_ts)?;
                 }
                 history.insert(now_micros(), hash_key)?;
                 changed = true;
@@ -214,55 +211,32 @@ impl ClipStore {
     }
 
     pub fn delete_text(&self, text: &str) -> Result<(), redb::Error> {
-        self.delete_matching(
-            |clip| matches!(&clip.content, ClipContent::Text(t) if t == text),
-            None,
-        )?;
+        self.delete_by_hash(xxh3_64(text.as_bytes()), None)?;
         self.rebuild_cache();
         Ok(())
     }
 
     pub fn delete_image(&self, path: &str) -> Result<(), redb::Error> {
-        let path = path.to_string();
-        self.delete_matching(
-            |clip| matches!(&clip.content, ClipContent::Image(p) if p == &path),
-            Some(&path),
-        )?;
+        self.delete_by_hash(xxh3_64(path.as_bytes()), Some(path))?;
         self.rebuild_cache();
         Ok(())
     }
 
-    fn delete_matching(
-        &self,
-        predicate: impl Fn(&Clip) -> bool,
-        file_to_remove: Option<&str>,
-    ) -> Result<(), redb::Error> {
+    fn delete_by_hash(&self, hash: u64, file_to_remove: Option<&str>) -> Result<(), redb::Error> {
         let txn = self.db.begin_write()?;
         {
-            let clips_ro = txn.open_table(CLIPS)?;
-            let to_remove: Vec<u64> = clips_ro
-                .iter()?
-                .filter_map(|e| {
-                    let (k, v) = e.ok()?;
-                    let clip: Clip = bincode::deserialize(v.value()).ok()?;
-                    predicate(&clip).then_some(k.value())
-                })
-                .collect();
-            drop(clips_ro);
-
             let mut clips = txn.open_table(CLIPS)?;
             let mut history = txn.open_table(HISTORY)?;
             let mut pinned = txn.open_table(PINNED)?;
 
-            for hash in &to_remove {
-                clips.remove(hash)?;
-                pinned.remove(hash)?;
-            }
+            clips.remove(hash)?;
+            pinned.remove(hash)?;
+
             let ts_to_remove: Vec<u64> = history
                 .iter()?
                 .filter_map(|e| {
                     let (k, v) = e.ok()?;
-                    to_remove.contains(&v.value()).then_some(k.value())
+                    (v.value() == hash).then_some(k.value())
                 })
                 .collect();
             for ts in ts_to_remove {
