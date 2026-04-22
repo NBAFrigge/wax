@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1776870219753,
+  "lastUpdate": 1776870469476,
   "repoUrl": "https://github.com/NBAFrigge/wax",
   "entries": {
     "Benchmark": [
@@ -2019,6 +2019,90 @@ window.BENCHMARK_DATA = {
             "name": "push_text/db_entries/1000",
             "value": 1261311,
             "range": "± 84267",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "frigerioalessandro659@gmail.com",
+            "name": "Frigge",
+            "username": "NBAFrigge"
+          },
+          "committer": {
+            "email": "frigerioalessandro659@gmail.com",
+            "name": "Frigge",
+            "username": "NBAFrigge"
+          },
+          "distinct": true,
+          "id": "238e3baba8f1bfe7a562c9162bda4f033a4427c5",
+          "message": "Wofi bug fixed",
+          "timestamp": "2026-04-22T17:05:06+02:00",
+          "tree_id": "40734853993ec3138c055513136bf53af183db58",
+          "url": "https://github.com/NBAFrigge/wax/commit/238e3baba8f1bfe7a562c9162bda4f033a4427c5"
+        },
+        "date": 1776870469172,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "read_cache/entries/50",
+            "value": 7477,
+            "range": "± 22",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "read_cache/entries/500",
+            "value": 8336,
+            "range": "± 20",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "read_cache/entries/5000",
+            "value": 12675,
+            "range": "± 24",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "read_cache/entries/50000",
+            "value": 76071,
+            "range": "± 484",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "get/db_entries/50",
+            "value": 9349,
+            "range": "± 9",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "get/db_entries/500",
+            "value": 12459,
+            "range": "± 16",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "get/db_entries/5000",
+            "value": 13382,
+            "range": "± 38",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "push_text/db_entries/0",
+            "value": 1257810,
+            "range": "± 29597",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "push_text/db_entries/100",
+            "value": 1021481,
+            "range": "± 40489",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "push_text/db_entries/1000",
+            "value": 1287270,
+            "range": "± 74662",
             "unit": "ns/iter"
           }
         ]
