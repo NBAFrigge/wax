@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1776871133067,
+  "lastUpdate": 1776899231052,
   "repoUrl": "https://github.com/NBAFrigge/wax",
   "entries": {
     "Benchmark": [
@@ -2187,6 +2187,90 @@ window.BENCHMARK_DATA = {
             "name": "push_text/db_entries/1000",
             "value": 1246951,
             "range": "± 138938",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "frigerioalessandro659@gmail.com",
+            "name": "Frigge",
+            "username": "NBAFrigge"
+          },
+          "committer": {
+            "email": "frigerioalessandro659@gmail.com",
+            "name": "Frigge",
+            "username": "NBAFrigge"
+          },
+          "distinct": true,
+          "id": "a58e396c1cab6467da1e3d5101588c9194b61926",
+          "message": "README updated",
+          "timestamp": "2026-04-23T01:04:27+02:00",
+          "tree_id": "38dea7d04e28acec2b3fc878230bf7e0cb922c2b",
+          "url": "https://github.com/NBAFrigge/wax/commit/a58e396c1cab6467da1e3d5101588c9194b61926"
+        },
+        "date": 1776899230791,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "read_cache/entries/50",
+            "value": 7704,
+            "range": "± 165",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "read_cache/entries/500",
+            "value": 8508,
+            "range": "± 16",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "read_cache/entries/5000",
+            "value": 13467,
+            "range": "± 21",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "read_cache/entries/50000",
+            "value": 79636,
+            "range": "± 170",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "get/db_entries/50",
+            "value": 9145,
+            "range": "± 11",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "get/db_entries/500",
+            "value": 12037,
+            "range": "± 89",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "get/db_entries/5000",
+            "value": 37346,
+            "range": "± 181",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "push_text/db_entries/0",
+            "value": 1258542,
+            "range": "± 22217",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "push_text/db_entries/100",
+            "value": 945487,
+            "range": "± 405336",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "push_text/db_entries/1000",
+            "value": 1204439,
+            "range": "± 80433",
             "unit": "ns/iter"
           }
         ]
