@@ -1,13 +1,15 @@
-use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition};
+use redb::{Database, ReadableDatabase, ReadableTable, ReadableTableMetadata, TableDefinition};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 use xxhash_rust::xxh3::xxh3_64;
 
 const CLIPS: TableDefinition<u64, &[u8]> = TableDefinition::new("clips");
 const HISTORY: TableDefinition<u64, u64> = TableDefinition::new("history");
 const PINNED: TableDefinition<u64, u64> = TableDefinition::new("pinned");
+const HASH_TS: TableDefinition<u64, u64> = TableDefinition::new("hash_ts");
 
 #[derive(Serialize, Deserialize)]
 pub enum ClipContent {
@@ -85,11 +87,29 @@ impl ClipStore {
             .set_cache_size(256 * 1024)
             .create(&path)?;
 
-        let txn = db.begin_write()?;
-        txn.open_table(CLIPS)?;
-        txn.open_table(HISTORY)?;
-        txn.open_table(PINNED)?;
-        txn.commit()?;
+        {
+            let txn = db.begin_write()?;
+            txn.open_table(CLIPS)?;
+            txn.open_table(HISTORY)?;
+            txn.open_table(PINNED)?;
+            txn.open_table(HASH_TS)?;
+            txn.commit()?;
+        }
+
+        {
+            let txn = db.begin_write()?;
+            {
+                let history = txn.open_table(HISTORY)?;
+                let mut hash_ts = txn.open_table(HASH_TS)?;
+                if hash_ts.len()? == 0 && history.len()? > 0 {
+                    for entry in history.iter()? {
+                        let (k, v) = entry?;
+                        hash_ts.insert(v.value(), k.value())?;
+                    }
+                }
+            }
+            txn.commit()?;
+        }
 
         let images_dir = dirs::data_dir()
             .unwrap_or_else(|| PathBuf::from("/tmp"))
@@ -125,7 +145,7 @@ impl ClipStore {
         }
         let path_str = path.to_string_lossy().into_owned();
         let changed = self.push(Clip {
-            content: ClipContent::Image(path_str.clone()),
+            content: ClipContent::Image(path_str),
         })?;
         if changed {
             self.rebuild_cache();
@@ -145,6 +165,7 @@ impl ClipStore {
         {
             let mut clips = txn.open_table(CLIPS)?;
             let mut history = txn.open_table(HISTORY)?;
+            let mut hash_ts = txn.open_table(HASH_TS)?;
 
             let last_hash = history.last()?.map(|e| e.1.value());
             if last_hash == Some(hash_key) {
@@ -152,16 +173,25 @@ impl ClipStore {
             } else if clips.get(hash_key)?.is_none() {
                 let bytes = bincode::serialize(&clip)?;
                 clips.insert(hash_key, bytes.as_slice())?;
-                history.insert(now_micros(), hash_key)?;
+                let ts = unique_micros();
+                history.insert(ts, hash_key)?;
+                hash_ts.insert(hash_key, ts)?;
                 changed = true;
             } else {
-                if let Some(old_ts) = history.iter()?.find_map(|e| {
-                    let (k, v) = e.ok()?;
-                    (v.value() == hash_key).then_some(k.value())
-                }) {
+                let old_ts = if let Some(e) = hash_ts.get(hash_key)? {
+                    Some(e.value())
+                } else {
+                    history.iter()?.find_map(|e| {
+                        let (k, v) = e.ok()?;
+                        (v.value() == hash_key).then_some(k.value())
+                    })
+                };
+                if let Some(old_ts) = old_ts {
                     history.remove(old_ts)?;
                 }
-                history.insert(now_micros(), hash_key)?;
+                let ts = unique_micros();
+                history.insert(ts, hash_key)?;
+                hash_ts.insert(hash_key, ts)?;
                 changed = true;
             }
         }
@@ -213,51 +243,67 @@ impl ClipStore {
     }
 
     pub fn delete_text(&self, text: &str) -> Result<(), redb::Error> {
-        self.delete_by_hash(xxh3_64(text.as_bytes()), None)?;
-        self.rebuild_cache();
+        let changed = self.delete_by_hash(xxh3_64(text.as_bytes()), None)?;
+        if changed {
+            self.rebuild_cache();
+        }
         Ok(())
     }
 
     pub fn delete_image(&self, path: &str) -> Result<(), redb::Error> {
-        self.delete_by_hash(xxh3_64(path.as_bytes()), Some(path))?;
-        self.rebuild_cache();
+        let changed = self.delete_by_hash(xxh3_64(path.as_bytes()), Some(path))?;
+        if changed {
+            self.rebuild_cache();
+        }
         Ok(())
     }
 
-    fn delete_by_hash(&self, hash: u64, file_to_remove: Option<&str>) -> Result<(), redb::Error> {
+    fn delete_by_hash(&self, hash: u64, file_to_remove: Option<&str>) -> Result<bool, redb::Error> {
         let txn = self.db.begin_write()?;
+        let removed;
         {
             let mut clips = txn.open_table(CLIPS)?;
             let mut history = txn.open_table(HISTORY)?;
             let mut pinned = txn.open_table(PINNED)?;
+            let mut hash_ts = txn.open_table(HASH_TS)?;
 
-            clips.remove(hash)?;
+            removed = clips.remove(hash)?.is_some();
             pinned.remove(hash)?;
 
-            let ts_to_remove: Vec<u64> = history
-                .iter()?
-                .filter_map(|e| {
-                    let (k, v) = e.ok()?;
-                    (v.value() == hash).then_some(k.value())
-                })
-                .collect();
-            for ts in ts_to_remove {
+            let ts_opt = hash_ts.get(hash)?.map(|e| e.value());
+            hash_ts.remove(hash)?;
+
+            if let Some(ts) = ts_opt {
                 history.remove(ts)?;
+            } else {
+                let ts_to_remove: Vec<u64> = history
+                    .iter()?
+                    .filter_map(|e| {
+                        let (k, v) = e.ok()?;
+                        (v.value() == hash).then_some(k.value())
+                    })
+                    .collect();
+                for ts in ts_to_remove {
+                    history.remove(ts)?;
+                }
             }
         }
         txn.commit()?;
         if let Some(path) = file_to_remove {
             std::fs::remove_file(path).ok();
         }
-        Ok(())
+        Ok(removed)
     }
 
     fn trim_oldest(&self, n: usize) -> Result<(), Box<dyn std::error::Error>> {
+        let mut image_paths: Vec<String> = Vec::new();
+
         let txn = self.db.begin_write()?;
         {
             let mut history = txn.open_table(HISTORY)?;
             let mut clips = txn.open_table(CLIPS)?;
             let pinned = txn.open_table(PINNED)?;
+            let mut hash_ts = txn.open_table(HASH_TS)?;
 
             let to_remove: Vec<(u64, u64)> = history
                 .iter()?
@@ -272,30 +318,38 @@ impl ClipStore {
                 history.remove(ts)?;
             }
 
-            let still_referenced: std::collections::HashSet<u64> = history
+            let still_referenced: HashSet<u64> = history
                 .iter()?
                 .filter_map(|e| e.ok().map(|(_, v)| v.value()))
                 .collect();
 
-            let pinned_hashes: std::collections::HashSet<u64> = pinned
+            let pinned_hashes: HashSet<u64> = pinned
                 .iter()?
                 .filter_map(|e| e.ok().map(|(k, _)| k.value()))
                 .collect();
 
             for (_, hash) in &to_remove {
-                if !still_referenced.contains(hash) && !pinned_hashes.contains(hash) {
-                    if let Ok(Some(data)) = clips.get(hash) {
-                        if let Ok(clip) = bincode::deserialize::<Clip>(data.value()) {
-                            if let ClipContent::Image(path) = clip.content {
-                                std::fs::remove_file(&path).ok();
+                if !still_referenced.contains(hash) {
+                    hash_ts.remove(hash)?;
+                    if !pinned_hashes.contains(hash) {
+                        if let Ok(Some(data)) = clips.get(hash) {
+                            if let Ok(clip) = bincode::deserialize::<Clip>(data.value()) {
+                                if let ClipContent::Image(path) = clip.content {
+                                    image_paths.push(path);
+                                }
                             }
                         }
+                        clips.remove(hash)?;
                     }
-                    clips.remove(hash)?;
                 }
             }
         }
         txn.commit()?;
+
+        for path in &image_paths {
+            std::fs::remove_file(path).ok();
+        }
+
         self.rebuild_cache();
         Ok(())
     }
@@ -307,11 +361,14 @@ impl ClipStore {
         };
         let cutoff = now_micros().saturating_sub(ttl_secs * 1_000_000);
 
+        let mut image_paths: Vec<String> = Vec::new();
+
         let txn = self.db.begin_write()?;
         {
             let mut history = txn.open_table(HISTORY)?;
             let mut clips = txn.open_table(CLIPS)?;
             let pinned = txn.open_table(PINNED)?;
+            let mut hash_ts = txn.open_table(HASH_TS)?;
 
             let to_remove: Vec<(u64, u64)> = history
                 .range(..cutoff)?
@@ -325,30 +382,38 @@ impl ClipStore {
                 history.remove(ts)?;
             }
 
-            let still_referenced: std::collections::HashSet<u64> = history
+            let still_referenced: HashSet<u64> = history
                 .iter()?
                 .filter_map(|e| e.ok().map(|(_, v)| v.value()))
                 .collect();
 
-            let pinned_hashes: std::collections::HashSet<u64> = pinned
+            let pinned_hashes: HashSet<u64> = pinned
                 .iter()?
                 .filter_map(|e| e.ok().map(|(k, _)| k.value()))
                 .collect();
 
             for (_, hash) in &to_remove {
-                if !still_referenced.contains(hash) && !pinned_hashes.contains(hash) {
-                    if let Ok(Some(data)) = clips.get(hash) {
-                        if let Ok(clip) = bincode::deserialize::<Clip>(data.value()) {
-                            if let ClipContent::Image(path) = clip.content {
-                                std::fs::remove_file(&path).ok();
+                if !still_referenced.contains(hash) {
+                    hash_ts.remove(hash)?;
+                    if !pinned_hashes.contains(hash) {
+                        if let Ok(Some(data)) = clips.get(hash) {
+                            if let Ok(clip) = bincode::deserialize::<Clip>(data.value()) {
+                                if let ClipContent::Image(path) = clip.content {
+                                    image_paths.push(path);
+                                }
                             }
                         }
+                        clips.remove(hash)?;
                     }
-                    clips.remove(hash)?;
                 }
             }
         }
         txn.commit()?;
+
+        for path in &image_paths {
+            std::fs::remove_file(path).ok();
+        }
+
         self.rebuild_cache();
         Ok(())
     }
@@ -393,48 +458,33 @@ impl ClipStore {
         }
     }
 
-    #[cfg(test)]
-    fn push_text_at(
-        &self,
-        text: &str,
-        timestamp_micros: u64,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let hash_key = xxh3_64(text.as_bytes());
-        let txn = self.db.begin_write()?;
-        {
-            let mut clips = txn.open_table(CLIPS)?;
-            let mut history = txn.open_table(HISTORY)?;
-            if clips.get(hash_key)?.is_none() {
-                let bytes = bincode::serialize(&Clip {
-                    content: ClipContent::Text(text.to_string()),
-                })?;
-                clips.insert(hash_key, bytes.as_slice())?;
-            }
-            history.insert(timestamp_micros, hash_key)?;
-        }
-        txn.commit()?;
-        Ok(())
-    }
-
     pub fn clear(&self) -> Result<(), redb::Error> {
+        let mut image_paths: Vec<String> = Vec::new();
+
         let txn = self.db.begin_write()?;
         {
-            let pinned_hashes: HashSet<u64> = txn
-                .open_table(PINNED)?
-                .iter()?
-                .filter_map(|e| e.ok().map(|(k, _)| k.value()))
-                .collect();
+            let pinned_hashes: HashSet<u64> = {
+                let pinned = txn.open_table(PINNED)?;
+                pinned
+                    .iter()?
+                    .filter_map(|e| e.ok().map(|(k, _)| k.value()))
+                    .collect()
+            };
 
             let mut history = txn.open_table(HISTORY)?;
-            let ts_to_remove: Vec<u64> = history
+            let mut hash_ts = txn.open_table(HASH_TS)?;
+
+            let ts_to_remove: Vec<(u64, u64)> = history
                 .iter()?
                 .filter_map(|e| {
                     let (k, v) = e.ok()?;
-                    (!pinned_hashes.contains(&v.value())).then_some(k.value())
+                    (!pinned_hashes.contains(&v.value())).then_some((k.value(), v.value()))
                 })
                 .collect();
-            for ts in ts_to_remove {
+
+            for (ts, hash) in &ts_to_remove {
                 history.remove(ts)?;
+                hash_ts.remove(hash)?;
             }
 
             let mut clips = txn.open_table(CLIPS)?;
@@ -445,11 +495,12 @@ impl ClipStore {
                     (!pinned_hashes.contains(&k.value())).then_some(k.value())
                 })
                 .collect();
+
             for hash in &clips_to_remove {
                 if let Ok(Some(data)) = clips.get(hash) {
                     if let Ok(clip) = bincode::deserialize::<Clip>(data.value()) {
                         if let ClipContent::Image(path) = clip.content {
-                            std::fs::remove_file(&path).ok();
+                            image_paths.push(path);
                         }
                     }
                 }
@@ -457,6 +508,11 @@ impl ClipStore {
             }
         }
         txn.commit()?;
+
+        for path in &image_paths {
+            std::fs::remove_file(path).ok();
+        }
+
         self.rebuild_cache();
         Ok(())
     }
@@ -493,18 +549,52 @@ impl ClipStore {
     pub fn pin_text(&self, text: &str) -> Result<(), redb::Error> {
         let hash = clip_hash(text);
         let txn = self.db.begin_write()?;
-        txn.open_table(PINNED)?.insert(hash, now_micros())?;
+        let clips = txn.open_table(CLIPS)?;
+        let exists = clips.get(hash)?.is_some();
+        drop(clips);
+        if exists {
+            txn.open_table(PINNED)?.insert(hash, unique_micros())?;
+        }
         txn.commit()?;
-        self.rebuild_cache();
+        if exists {
+            self.rebuild_cache();
+        }
         Ok(())
     }
 
     pub fn unpin_text(&self, text: &str) -> Result<(), redb::Error> {
         let hash = clip_hash(text);
         let txn = self.db.begin_write()?;
-        txn.open_table(PINNED)?.remove(hash)?;
+        let removed = txn.open_table(PINNED)?.remove(hash)?.is_some();
         txn.commit()?;
-        self.rebuild_cache();
+        if removed {
+            self.rebuild_cache();
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    fn push_text_at(
+        &self,
+        text: &str,
+        timestamp_micros: u64,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let hash_key = xxh3_64(text.as_bytes());
+        let txn = self.db.begin_write()?;
+        {
+            let mut clips = txn.open_table(CLIPS)?;
+            let mut history = txn.open_table(HISTORY)?;
+            let mut hash_ts = txn.open_table(HASH_TS)?;
+            if clips.get(hash_key)?.is_none() {
+                let bytes = bincode::serialize(&Clip {
+                    content: ClipContent::Text(text.to_string()),
+                })?;
+                clips.insert(hash_key, bytes.as_slice())?;
+            }
+            history.insert(timestamp_micros, hash_key)?;
+            hash_ts.insert(hash_key, timestamp_micros)?;
+        }
+        txn.commit()?;
         Ok(())
     }
 }
@@ -532,6 +622,21 @@ fn now_micros() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_micros() as u64
+}
+
+fn unique_micros() -> u64 {
+    static LAST: AtomicU64 = AtomicU64::new(0);
+    let now = now_micros();
+    loop {
+        let last = LAST.load(Ordering::Relaxed);
+        let next = if now > last { now } else { last + 1 };
+        if LAST
+            .compare_exchange_weak(last, next, Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok()
+        {
+            return next;
+        }
+    }
 }
 
 #[cfg(test)]

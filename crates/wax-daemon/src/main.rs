@@ -3,7 +3,7 @@ mod state;
 
 use regex::RegexSet;
 use state::State;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::os::fd::AsFd;
 use std::os::unix::net::UnixListener;
 use std::sync::Arc;
@@ -168,7 +168,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 continue;
             };
 
-            if let Err(e) = handle_offer(offer, mime, &mut event_queue, &store, &regex_exclude) {
+            if let Err(e) = handle_offer(offer, mime, &mut event_queue, &store, &regex_exclude, &limits) {
                 eprintln!("failed to handle clipboard offer: {}", e);
             }
 
@@ -189,15 +189,22 @@ fn handle_offer(
     event_queue: &mut EventQueue<State>,
     store: &ClipStore,
     regex_set: &RegexSet,
+    limits: &wax_store::Limits,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let (fd_read, fd_write) = rustix::pipe::pipe()?;
     offer.receive(mime.to_string(), fd_write.as_fd());
     drop(fd_write);
     event_queue.flush()?;
 
-    let mut file = std::fs::File::from(fd_read);
+    let max_bytes = match mime {
+        "image/png" => limits.max_images_bytes,
+        _ => limits.max_db_bytes,
+    };
+
     let mut buffer = Vec::new();
-    std::io::Read::read_to_end(&mut file, &mut buffer)?;
+    std::fs::File::from(fd_read)
+        .take(max_bytes)
+        .read_to_end(&mut buffer)?;
 
     match mime {
         "text/plain" => {
