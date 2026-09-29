@@ -66,7 +66,11 @@ impl Config {
         } else {
             format!(
                 "excluded_pattern = [{}]",
-                self.excluded_pattern.iter().map(|p| format!("\"{}\"", p)).collect::<Vec<_>>().join(", ")
+                self.excluded_pattern
+                    .iter()
+                    .map(|p| format!("\"{}\"", p))
+                    .collect::<Vec<_>>()
+                    .join(", ")
             )
         };
         let ttl = match self.ttl_secs {
@@ -75,7 +79,12 @@ impl Config {
         };
         let content = format!(
             "max_db_mb = {}\nmax_images_mb = {}\n{}\n\nclipboard = {}\nprimary_selection = {}\n\n{}\n",
-            self.max_db_mb, self.max_images_mb, ttl, self.clipboard, self.primary_selection, excluded
+            self.max_db_mb,
+            self.max_images_mb,
+            ttl,
+            self.clipboard,
+            self.primary_selection,
+            excluded
         );
         std::fs::write(path, content).ok();
     }

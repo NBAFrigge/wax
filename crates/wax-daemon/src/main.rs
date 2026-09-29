@@ -13,22 +13,34 @@ use wax_store::{ClipContent, ClipStore, Limits};
 use wayland_client::{Connection, EventQueue};
 use wayland_protocols_wlr::data_control::v1::client::zwlr_data_control_offer_v1::ZwlrDataControlOfferV1;
 
+/// How many times to try opening the database before giving up. The previous
+/// daemon may still hold the lock while it shuts down.
+const DB_OPEN_ATTEMPTS: u32 = 10;
+
+const DB_OPEN_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(500);
+
+const BYTES_PER_MB: u64 = 1024 * 1024;
+
 fn open_store_with_retry(
     path: &std::path::Path,
     limits: &Limits,
 ) -> Result<ClipStore, Box<dyn std::error::Error>> {
-    for attempt in 0..10 {
+    for attempt in 0..DB_OPEN_ATTEMPTS {
         match ClipStore::open(path, limits.clone()) {
             Ok(store) => return Ok(store),
             Err(e) => {
                 if attempt == 0 {
                     eprintln!("db locked, retrying: {}", e);
                 }
-                std::thread::sleep(std::time::Duration::from_millis(500));
+                std::thread::sleep(DB_OPEN_RETRY_DELAY);
             }
         }
     }
-    Err("could not open database after 10 attempts".into())
+    Err(format!(
+        "could not open database after {} attempts",
+        DB_OPEN_ATTEMPTS
+    )
+    .into())
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -48,8 +60,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let config = config::Config::load();
     let limits = wax_store::Limits {
-        max_db_bytes: config.max_db_mb * 1024 * 1024,
-        max_images_bytes: config.max_images_mb * 1024 * 1024,
+        max_db_bytes: config.max_db_mb * BYTES_PER_MB,
+        max_images_bytes: config.max_images_mb * BYTES_PER_MB,
         ttl_secs: config.ttl_secs,
     };
 
@@ -168,7 +180,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 continue;
             };
 
-            if let Err(e) = handle_offer(offer, mime, &mut event_queue, &store, &regex_exclude, &limits) {
+            if let Err(e) = handle_offer(
+                offer,
+                mime,
+                &mut event_queue,
+                &store,
+                &regex_exclude,
+                &limits,
+            ) {
                 eprintln!("failed to handle clipboard offer: {}", e);
             }
 
@@ -211,7 +230,6 @@ fn handle_offer(
             let text = String::from_utf8_lossy(&buffer);
             if !regex_set.is_match(&text) {
                 store.push_text(text.trim())?;
-            } else {
             }
         }
         "image/png" => {

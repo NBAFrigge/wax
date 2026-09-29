@@ -1,5 +1,11 @@
 use serde::Deserialize;
 
+/// How many entries the picker shows by default.
+pub const DEFAULT_LIMIT: usize = 50;
+
+/// How many characters of each entry the picker shows before truncating.
+pub const DEFAULT_MAX_DISPLAY_LEN: usize = 50;
+
 #[derive(Deserialize)]
 pub struct Config {
     #[serde(default = "default_max_display_len")]
@@ -13,11 +19,11 @@ pub struct Config {
 }
 
 fn default_max_display_len() -> usize {
-    50
+    DEFAULT_MAX_DISPLAY_LEN
 }
 
 fn default_limit() -> usize {
-    50
+    DEFAULT_LIMIT
 }
 
 fn default_pin_key() -> String {

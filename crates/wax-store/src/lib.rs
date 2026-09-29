@@ -11,6 +11,22 @@ const HISTORY: TableDefinition<u64, u64> = TableDefinition::new("history");
 const PINNED: TableDefinition<u64, u64> = TableDefinition::new("pinned");
 const HASH_TS: TableDefinition<u64, u64> = TableDefinition::new("hash_ts");
 
+/// How many of the oldest entries to drop per round when over a size limit.
+/// This is a batch size, not a target: callers keep trimming until the data
+/// actually fits, or until a round removes nothing.
+const TRIM_BATCH: usize = 50;
+
+/// How many clips the picker cache holds. This is a hard ceiling on what
+/// `wax list` can return, independent of `max_db_mb` — the store keeps more
+/// entries in redb than the CLI is able to show.
+const CACHE_ENTRY_LIMIT: usize = 1000;
+
+/// redb's in-memory page cache. Kept small deliberately: the daemon is a
+/// long-lived background process that only reads a few pages per copy.
+const DB_CACHE_BYTES: usize = 256 * 1024;
+
+const MICROS_PER_SEC: u64 = 1_000_000;
+
 #[derive(Serialize, Deserialize)]
 pub enum ClipContent {
     Text(String),
@@ -85,7 +101,7 @@ impl ClipStore {
             std::fs::create_dir_all(parent).ok();
         }
         let mut db = Database::builder()
-            .set_cache_size(256 * 1024)
+            .set_cache_size(DB_CACHE_BYTES)
             .create(&path)?;
 
         {
@@ -373,7 +389,7 @@ impl ClipStore {
             Some(t) => t,
             None => return Ok(()),
         };
-        let cutoff = now_micros().saturating_sub(ttl_secs * 1_000_000);
+        let cutoff = now_micros().saturating_sub(ttl_secs * MICROS_PER_SEC);
 
         let mut image_paths: Vec<String> = Vec::new();
 
@@ -437,11 +453,11 @@ impl ClipStore {
             .map(|m| m.len())
             .unwrap_or(0);
         if db_size > self.limits.max_db_bytes {
-            self.trim_oldest(50).ok();
+            self.trim_oldest(TRIM_BATCH).ok();
         }
 
         if self.images_dir_dim.load(Ordering::Relaxed) > self.limits.max_images_bytes {
-            self.trim_oldest(50).ok();
+            self.trim_oldest(TRIM_BATCH).ok();
         }
 
         if self.limits.ttl_secs.is_some() {
@@ -450,7 +466,7 @@ impl ClipStore {
     }
 
     fn rebuild_cache(&self) {
-        let clips = match self.get(1000) {
+        let clips = match self.get(CACHE_ENTRY_LIMIT) {
             Ok(c) => c,
             Err(_) => return,
         };

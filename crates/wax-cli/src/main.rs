@@ -6,6 +6,30 @@ use std::os::unix::net::UnixStream;
 use std::process::{Command, Stdio};
 use wax_ipc::{Request, Response};
 
+/// Rofi's exit code for `KB_CUSTOM_1`, the keybind we bind to pin/unpin.
+const ROFI_CUSTOM_KEY_EXIT: i32 = 10;
+
+/// Rofi's row separator, used to split icon metadata off a selected line.
+const ROFI_ICON_SEPARATOR: char = '\0';
+
+/// How long to wait for Hyprland to focus the previous window before pasting.
+const FOCUS_WAIT_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(1000);
+
+/// Extra settle time once the focus deadline passes, giving the compositor a
+/// last chance before we send the paste keystroke.
+const FOCUS_SETTLE_DELAY: std::time::Duration = std::time::Duration::from_millis(150);
+
+/// How often to poll `hyprctl` while waiting for the focus to land.
+const FOCUS_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(20);
+
+/// Bytes needed to reach a PNG's width/height fields.
+const PNG_HEADER_BYTES: usize = 24;
+
+const SECS_PER_MINUTE: u64 = 60;
+const SECS_PER_HOUR: u64 = 60 * 60;
+const SECS_PER_DAY: u64 = 24 * 60 * 60;
+const EPOCH_YEAR: u64 = 1970;
+
 #[derive(Parser)]
 #[command(name = "wax", about = "Clipboard manager for Wayland / Hyprland")]
 struct Cli {
@@ -24,7 +48,7 @@ enum Cmd {
         instant_paste: bool,
     },
     List {
-        #[arg(default_value_t = 50)]
+        #[arg(default_value_t = config::DEFAULT_LIMIT)]
         n: usize,
     },
     Delete {
@@ -138,7 +162,7 @@ impl Picker {
                 if icon.is_empty() {
                     entry.display.clone()
                 } else {
-                    format!("{}\0icon\x1f{}", entry.display, icon)
+                    format!("{}{}icon\x1f{}", entry.display, ROFI_ICON_SEPARATOR, icon)
                 }
             }
         }
@@ -224,7 +248,7 @@ impl Picker {
 
         let display = if let Some(pos) = selected.rfind('\t') {
             &selected[pos + 1..]
-        } else if let Some(pos) = selected.find('\0') {
+        } else if let Some(pos) = selected.find(ROFI_ICON_SEPARATOR) {
             &selected[..pos]
         } else {
             selected
@@ -240,7 +264,7 @@ impl Picker {
             .find(|e| e.display == display)
             .map(|e| e.original.clone())?;
 
-        let action = if exit_code == 10 {
+        let action = if exit_code == ROFI_CUSTOM_KEY_EXIT {
             PickAction::Pin
         } else {
             PickAction::Copy
@@ -301,16 +325,16 @@ fn focus_window_and_wait(address: &str) {
         .args(["dispatch", "focuswindow", &format!("address:{}", address)])
         .output();
 
-    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(1000);
+    let deadline = std::time::Instant::now() + FOCUS_WAIT_TIMEOUT;
     loop {
         if active_window_address().as_deref() == Some(address) {
             break;
         }
         if std::time::Instant::now() >= deadline {
-            std::thread::sleep(std::time::Duration::from_millis(150));
+            std::thread::sleep(FOCUS_SETTLE_DELAY);
             break;
         }
-        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::thread::sleep(FOCUS_POLL_INTERVAL);
     }
 }
 
@@ -391,7 +415,7 @@ fn is_in_path(cmd: &str) -> bool {
 }
 
 fn png_dimensions(path: &str) -> Option<(u32, u32)> {
-    let mut buf = [0u8; 24];
+    let mut buf = [0u8; PNG_HEADER_BYTES];
     std::fs::File::open(path).ok()?.read_exact(&mut buf).ok()?;
     if &buf[0..8] != b"\x89PNG\r\n\x1a\n" || &buf[12..16] != b"IHDR" {
         return None;
@@ -414,10 +438,10 @@ fn file_time_label_inner(path: &str) -> Option<String> {
     let now_secs =
         (SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs() as i64 + offset) as u64;
 
-    let today_start = now_secs - (now_secs % 86400);
-    let mtime_day = mtime_secs - (mtime_secs % 86400);
-    let hh = (mtime_secs % 86400) / 3600;
-    let mm = (mtime_secs % 3600) / 60;
+    let today_start = now_secs - (now_secs % SECS_PER_DAY);
+    let mtime_day = mtime_secs - (mtime_secs % SECS_PER_DAY);
+    let hh = (mtime_secs % SECS_PER_DAY) / SECS_PER_HOUR;
+    let mm = (mtime_secs % SECS_PER_HOUR) / SECS_PER_MINUTE;
 
     if mtime_day == today_start {
         Some(format!("{:02}:{:02}", hh, mm))
@@ -437,24 +461,22 @@ fn local_utc_offset_secs() -> i64 {
     tm.tm_gmtoff
 }
 
+fn is_leap_year(y: u64) -> bool {
+    (y.is_multiple_of(4) && !y.is_multiple_of(100)) || y.is_multiple_of(400)
+}
+
 fn epoch_secs_to_date(secs: u64) -> (u64, u64) {
-    let mut remaining = secs / 86400;
-    let mut y = 1970u64;
+    let mut remaining = secs / SECS_PER_DAY;
+    let mut y = EPOCH_YEAR;
     loop {
-        let days_in_year =
-            if (y.is_multiple_of(4) && !y.is_multiple_of(100)) || y.is_multiple_of(400) {
-                366
-            } else {
-                365
-            };
+        let days_in_year = if is_leap_year(y) { 366 } else { 365 };
         if remaining < days_in_year {
             break;
         }
         remaining -= days_in_year;
         y += 1;
     }
-    let leap = (y.is_multiple_of(4) && !y.is_multiple_of(100)) || y.is_multiple_of(400);
-    let months = if leap {
+    let months = if is_leap_year(y) {
         [31u64, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
     } else {
         [31u64, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
