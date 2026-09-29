@@ -43,6 +43,7 @@ pub struct ClipStore {
     db: Database,
     db_path: PathBuf,
     images_dir: PathBuf,
+    images_dir_dim: AtomicU64,
     limits: Limits,
 }
 
@@ -83,7 +84,7 @@ impl ClipStore {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).ok();
         }
-        let db = Database::builder()
+        let mut db = Database::builder()
             .set_cache_size(256 * 1024)
             .create(&path)?;
 
@@ -111,16 +112,25 @@ impl ClipStore {
             txn.commit()?;
         }
 
+        let metadata = std::fs::metadata(&path)?;
+        if metadata.len() > limits.max_db_bytes {
+            db.compact()?;
+        }
+
         let images_dir = dirs::data_dir()
             .unwrap_or_else(|| PathBuf::from("/tmp"))
             .join("wax/images");
+
+        let images_dir_dim = dir_size(images_dir.as_path());
 
         let store = Self {
             db,
             db_path: path,
             images_dir,
+            images_dir_dim: AtomicU64::new(images_dir_dim),
             limits,
         };
+        store.enforce_limits();
         store.rebuild_cache();
         Ok(store)
     }
@@ -130,8 +140,8 @@ impl ClipStore {
             content: ClipContent::Text(text.to_string()),
         })?;
         if changed {
-            self.rebuild_cache();
             self.enforce_limits();
+            self.rebuild_cache();
         }
         Ok(())
     }
@@ -142,14 +152,16 @@ impl ClipStore {
         let path = self.images_dir.join(format!("{}.png", hash));
         if !path.exists() {
             std::fs::write(&path, data)?;
+            self.images_dir_dim
+                .fetch_add(data.len() as u64, Ordering::Relaxed);
         }
         let path_str = path.to_string_lossy().into_owned();
         let changed = self.push(Clip {
             content: ClipContent::Image(path_str),
         })?;
         if changed {
-            self.rebuild_cache();
             self.enforce_limits();
+            self.rebuild_cache();
         }
         Ok(())
     }
@@ -290,6 +302,8 @@ impl ClipStore {
         }
         txn.commit()?;
         if let Some(path) = file_to_remove {
+            self.images_dir_dim
+                .fetch_sub(std::fs::metadata(&path)?.len(), Ordering::Relaxed);
             std::fs::remove_file(path).ok();
         }
         Ok(removed)
@@ -332,12 +346,11 @@ impl ClipStore {
                 if !still_referenced.contains(hash) {
                     hash_ts.remove(hash)?;
                     if !pinned_hashes.contains(hash) {
-                        if let Ok(Some(data)) = clips.get(hash) {
-                            if let Ok(clip) = bincode::deserialize::<Clip>(data.value()) {
-                                if let ClipContent::Image(path) = clip.content {
-                                    image_paths.push(path);
-                                }
-                            }
+                        if let Ok(Some(data)) = clips.get(hash)
+                            && let Ok(clip) = bincode::deserialize::<Clip>(data.value())
+                            && let ClipContent::Image(path) = clip.content
+                        {
+                            image_paths.push(path);
                         }
                         clips.remove(hash)?;
                     }
@@ -347,10 +360,11 @@ impl ClipStore {
         txn.commit()?;
 
         for path in &image_paths {
+            self.images_dir_dim
+                .fetch_sub(std::fs::metadata(path)?.len(), Ordering::Relaxed);
             std::fs::remove_file(path).ok();
         }
 
-        self.rebuild_cache();
         Ok(())
     }
 
@@ -396,12 +410,11 @@ impl ClipStore {
                 if !still_referenced.contains(hash) {
                     hash_ts.remove(hash)?;
                     if !pinned_hashes.contains(hash) {
-                        if let Ok(Some(data)) = clips.get(hash) {
-                            if let Ok(clip) = bincode::deserialize::<Clip>(data.value()) {
-                                if let ClipContent::Image(path) = clip.content {
-                                    image_paths.push(path);
-                                }
-                            }
+                        if let Ok(Some(data)) = clips.get(hash)
+                            && let Ok(clip) = bincode::deserialize::<Clip>(data.value())
+                            && let ClipContent::Image(path) = clip.content
+                        {
+                            image_paths.push(path);
                         }
                         clips.remove(hash)?;
                     }
@@ -411,10 +424,11 @@ impl ClipStore {
         txn.commit()?;
 
         for path in &image_paths {
+            self.images_dir_dim
+                .fetch_sub(std::fs::metadata(&path)?.len(), Ordering::Relaxed);
             std::fs::remove_file(path).ok();
         }
 
-        self.rebuild_cache();
         Ok(())
     }
 
@@ -426,8 +440,7 @@ impl ClipStore {
             self.trim_oldest(50).ok();
         }
 
-        let images_size = dir_size(&self.images_dir);
-        if images_size > self.limits.max_images_bytes {
+        if self.images_dir_dim.load(Ordering::Relaxed) > self.limits.max_images_bytes {
             self.trim_oldest(50).ok();
         }
 
@@ -497,12 +510,11 @@ impl ClipStore {
                 .collect();
 
             for hash in &clips_to_remove {
-                if let Ok(Some(data)) = clips.get(hash) {
-                    if let Ok(clip) = bincode::deserialize::<Clip>(data.value()) {
-                        if let ClipContent::Image(path) = clip.content {
-                            image_paths.push(path);
-                        }
-                    }
+                if let Ok(Some(data)) = clips.get(hash)
+                    && let Ok(clip) = bincode::deserialize::<Clip>(data.value())
+                    && let ClipContent::Image(path) = clip.content
+                {
+                    image_paths.push(path);
                 }
                 clips.remove(hash)?;
             }
@@ -510,6 +522,8 @@ impl ClipStore {
         txn.commit()?;
 
         for path in &image_paths {
+            self.images_dir_dim
+                .fetch_sub(std::fs::metadata(&path)?.len(), Ordering::Relaxed);
             std::fs::remove_file(path).ok();
         }
 
