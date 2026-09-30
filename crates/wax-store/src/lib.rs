@@ -350,22 +350,15 @@ impl ClipStore {
                 rows_removed += 1;
             }
 
-            let still_referenced: HashSet<u64> = history
-                .iter()?
-                .filter_map(|e| e.ok().map(|(_, v)| v.value()))
-                .collect();
-
             for (_, hash) in &to_remove {
-                if !still_referenced.contains(hash) {
-                    hash_ts.remove(hash)?;
-                    if let Ok(Some(data)) = clips.get(hash)
-                        && let Ok(clip) = bincode::deserialize::<Clip>(data.value())
-                        && let ClipContent::Image(path) = clip.content
-                    {
-                        image_paths.push(path);
-                    }
-                    clips.remove(hash)?;
+                hash_ts.remove(hash)?;
+                if let Ok(Some(data)) = clips.get(hash)
+                    && let Ok(clip) = bincode::deserialize::<Clip>(data.value())
+                    && let ClipContent::Image(path) = clip.content
+                {
+                    image_paths.push(path);
                 }
+                clips.remove(hash)?;
             }
         }
         txn.commit()?;
@@ -413,22 +406,15 @@ impl ClipStore {
                 history.remove(ts)?;
             }
 
-            let still_referenced: HashSet<u64> = history
-                .iter()?
-                .filter_map(|e| e.ok().map(|(_, v)| v.value()))
-                .collect();
-
             for (_, hash) in &to_remove {
-                if !still_referenced.contains(hash) {
-                    hash_ts.remove(hash)?;
-                    if let Ok(Some(data)) = clips.get(hash)
-                        && let Ok(clip) = bincode::deserialize::<Clip>(data.value())
-                        && let ClipContent::Image(path) = clip.content
-                    {
-                        image_paths.push(path);
-                    }
-                    clips.remove(hash)?;
+                hash_ts.remove(hash)?;
+                if let Ok(Some(data)) = clips.get(hash)
+                    && let Ok(clip) = bincode::deserialize::<Clip>(data.value())
+                    && let ClipContent::Image(path) = clip.content
+                {
+                    image_paths.push(path);
                 }
+                clips.remove(hash)?;
             }
         }
         txn.commit()?;
