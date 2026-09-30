@@ -15,3 +15,6 @@ wax-store = { path = "../wax-store" }
 wax-ipc = { path = "../wax-ipc" }
 serde_json = "1.0.149"
 regex = "1.12.3"
+
+[dev-dependencies]
+tempfile = "3"

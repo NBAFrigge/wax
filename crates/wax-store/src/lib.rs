@@ -27,6 +27,13 @@ const DB_CACHE_BYTES: usize = 256 * 1024;
 
 const MICROS_PER_SEC: u64 = 1_000_000;
 
+/// The images directory used by [`ClipStore::open`].
+fn default_images_dir() -> PathBuf {
+    dirs::data_dir()
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
+        .join("wax/images")
+}
+
 #[derive(Serialize, Deserialize)]
 pub enum ClipContent {
     Text(String),
@@ -96,7 +103,16 @@ pub fn read_cache_from(path: &Path, n: usize) -> Option<Vec<String>> {
 
 impl ClipStore {
     pub fn open(path: impl AsRef<Path>, limits: Limits) -> Result<Self, redb::Error> {
-        let path = path.as_ref().to_path_buf();
+        let images_dir = default_images_dir();
+        Self::open_at(path.as_ref(), &images_dir, limits)
+    }
+
+    /// Open a store with an explicit images directory.
+    ///
+    /// Production callers use [`ClipStore::open`]. Tests need this because the
+    /// default images directory is the real user data directory.
+    fn open_at(path: &Path, images_dir: &Path, limits: Limits) -> Result<Self, redb::Error> {
+        let path = path.to_path_buf();
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).ok();
         }
@@ -133,11 +149,9 @@ impl ClipStore {
             db.compact()?;
         }
 
-        let images_dir = dirs::data_dir()
-            .unwrap_or_else(|| PathBuf::from("/tmp"))
-            .join("wax/images");
+        let images_dir = images_dir.to_path_buf();
 
-        let images_dir_dim = dir_size(images_dir.as_path());
+        let images_dir_dim = dir_size(&images_dir);
 
         let store = Self {
             db,
@@ -618,6 +632,44 @@ impl ClipStore {
             if clips.get(hash_key)?.is_none() {
                 let bytes = bincode::serialize(&Clip {
                     content: ClipContent::Text(text.to_string()),
+                })?;
+                clips.insert(hash_key, bytes.as_slice())?;
+            }
+            history.insert(timestamp_micros, hash_key)?;
+            hash_ts.insert(hash_key, timestamp_micros)?;
+        }
+        txn.commit()?;
+        Ok(())
+    }
+
+    /// Test-only: store an image with an explicit history timestamp, so TTL
+    /// expiry of image entries can be exercised. `push_text_at` covers text
+    /// only, and expiry is the only path that removes image files on a timer.
+    #[cfg(test)]
+    fn push_image_at(
+        &self,
+        data: &[u8],
+        timestamp_micros: u64,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let hash = xxh3_64(data);
+        std::fs::create_dir_all(&self.images_dir)?;
+        let path = self.images_dir.join(format!("{}.png", hash));
+        if !path.exists() {
+            std::fs::write(&path, data)?;
+            self.images_dir_dim
+                .fetch_add(data.len() as u64, Ordering::Relaxed);
+        }
+        let path_str = path.to_string_lossy().into_owned();
+        let hash_key = xxh3_64(path_str.as_bytes());
+
+        let txn = self.db.begin_write()?;
+        {
+            let mut clips = txn.open_table(CLIPS)?;
+            let mut history = txn.open_table(HISTORY)?;
+            let mut hash_ts = txn.open_table(HASH_TS)?;
+            if clips.get(hash_key)?.is_none() {
+                let bytes = bincode::serialize(&Clip {
+                    content: ClipContent::Image(path_str),
                 })?;
                 clips.insert(hash_key, bytes.as_slice())?;
             }

@@ -202,6 +202,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+#[cfg(test)]
+mod tests;
+
 fn handle_offer(
     offer: &ZwlrDataControlOfferV1,
     mime: &str,

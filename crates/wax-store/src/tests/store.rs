@@ -1,8 +1,7 @@
 //! Core store behaviour: push, retrieval, deduplication, deletion, clearing.
 
-use super::common::temp_store;
-use crate::{ClipContent, ClipStore, Limits};
-use std::sync::atomic::{AtomicU64, Ordering};
+use super::common::{temp_store, temp_store_with};
+use crate::{ClipContent, Limits};
 
 #[test]
 fn test_push_and_get_text() {
@@ -103,21 +102,11 @@ fn test_delete_text() {
 
 #[test]
 fn test_enforce_limits() {
-    use crate::now_micros;
-    static N: AtomicU64 = AtomicU64::new(0);
-    let store = ClipStore::open(
-        format!(
-            "/tmp/wax_limits_{}_{}.redb",
-            now_micros(),
-            N.fetch_add(1, Ordering::Relaxed)
-        ),
-        Limits {
-            max_db_bytes: 1,
-            max_images_bytes: u64::MAX,
-            ttl_secs: None,
-        },
-    )
-    .unwrap();
+    let store = temp_store_with(Limits {
+        max_db_bytes: 1,
+        max_images_bytes: u64::MAX,
+        ttl_secs: None,
+    });
     for i in 0..60 {
         store.push_text(&format!("entry {}", i)).unwrap();
     }

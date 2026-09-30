@@ -1,7 +1,7 @@
 use serde::Deserialize;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug, Clone, PartialEq)]
 pub struct Config {
     #[serde(default = "default_max_db_mb")]
     pub max_db_mb: u64,
@@ -44,20 +44,27 @@ impl Default for Config {
 
 impl Config {
     pub fn load() -> Self {
-        let path = match config_path() {
-            Some(p) => p,
-            None => return Self::default(),
-        };
-        if !path.exists() {
-            Self::default().save(&path);
+        match config_path() {
+            Some(p) => Self::load_from(&p),
+            None => Self::default(),
         }
-        std::fs::read_to_string(&path)
+    }
+
+    /// Load from an explicit path, creating it from defaults when absent.
+    ///
+    /// Split out from [`Config::load`] so the resolution can be tested without
+    /// depending on the process environment, which is global and racy.
+    pub(crate) fn load_from(path: &Path) -> Self {
+        if !path.exists() {
+            Self::default().save(path);
+        }
+        std::fs::read_to_string(path)
             .ok()
             .and_then(|s| toml::from_str(&s).ok())
             .unwrap_or_default()
     }
 
-    fn save(&self, path: &std::path::Path) {
+    pub(crate) fn save(&self, path: &Path) {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).ok();
         }
