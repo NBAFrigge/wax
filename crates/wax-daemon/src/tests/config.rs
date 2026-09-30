@@ -16,17 +16,9 @@ fn write_config(dir: &TempDir, contents: &str) -> std::path::PathBuf {
 }
 
 #[test]
-fn defaults_match_the_documented_values() {
-    let config = Config::default();
-    assert_eq!(config.max_db_mb, 50);
-    assert_eq!(config.max_images_mb, 100);
-}
-
-#[test]
 fn default_config_is_the_documented_one() {
     let config = Config::default();
-    assert_eq!(config.max_db_mb, 50);
-    assert_eq!(config.max_images_mb, 100);
+    assert_eq!(config.max_entries, 1000);
     assert_eq!(config.ttl_secs, None);
     assert!(config.excluded_pattern.is_empty());
     assert!(config.clipboard);
@@ -43,10 +35,10 @@ fn an_empty_file_yields_all_defaults() {
 #[test]
 fn omitted_fields_fall_back_to_their_defaults() {
     let dir = TempDir::new().unwrap();
-    let path = write_config(&dir, "max_db_mb = 10\n");
+    let path = write_config(&dir, "max_entries = 10\n");
     let config = Config::load_from(&path);
-    assert_eq!(config.max_db_mb, 10);
-    assert_eq!(config.max_images_mb, 100);
+    assert_eq!(config.max_entries, 10);
+    assert_eq!(config.ttl_secs, None);
     assert!(config.clipboard);
 }
 
@@ -55,11 +47,10 @@ fn every_field_is_read_when_present() {
     let dir = TempDir::new().unwrap();
     let path = write_config(
         &dir,
-        "max_db_mb = 1\nmax_images_mb = 2\nttl_secs = 3\nexcluded_pattern = [\"a\", \"b\"]\nclipboard = false\nprimary_selection = true\n",
+        "max_entries = 1\nttl_secs = 3\nexcluded_pattern = [\"a\", \"b\"]\nclipboard = false\nprimary_selection = true\n",
     );
     let config = Config::load_from(&path);
-    assert_eq!(config.max_db_mb, 1);
-    assert_eq!(config.max_images_mb, 2);
+    assert_eq!(config.max_entries, 1);
     assert_eq!(config.ttl_secs, Some(3));
     assert_eq!(config.excluded_pattern, vec!["a", "b"]);
     assert!(!config.clipboard);
@@ -69,7 +60,7 @@ fn every_field_is_read_when_present() {
 #[test]
 fn a_malformed_file_silently_yields_defaults_and_is_not_rewritten() {
     let dir = TempDir::new().unwrap();
-    let broken = "max_db_mb = not-a-number\n";
+    let broken = "max_entries = not-a-number\n";
     let path = write_config(&dir, broken);
     assert_eq!(Config::load_from(&path), Config::default());
     // The bad file is left in place, so the user keeps seeing their broken
@@ -101,8 +92,7 @@ fn a_generated_config_reloads_to_the_same_values() {
     let dir = TempDir::new().unwrap();
     let path = path_in(&dir);
     let original = Config {
-        max_db_mb: 7,
-        max_images_mb: 8,
+        max_entries: 7,
         ttl_secs: Some(604800),
         excluded_pattern: vec!["password".into(), "secret.*".into()],
         clipboard: false,
@@ -119,8 +109,7 @@ fn the_generated_default_config_reloads_to_the_defaults() {
     Config::default().save(&path);
 
     let text = fs::read_to_string(&path).unwrap();
-    assert!(text.contains("max_db_mb = 50"));
-    assert!(text.contains("max_images_mb = 100"));
+    assert!(text.contains("max_entries = 1000"));
     // Unset options are emitted as commented examples so users can discover
     // them without them being active.
     assert!(text.contains("# ttl_secs = 604800"));

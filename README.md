@@ -49,8 +49,7 @@ bind = $mod, V, exec, /usr/bin/wax
 The daemon creates `~/.config/wax/config.toml` on first run:
 
 ```toml
-max_db_mb = 50
-max_images_mb = 100
+max_entries = 1000
 # ttl_secs = 604800  # 7 days
 
 clipboard = true
@@ -61,8 +60,7 @@ primary_selection = false
 
 | Key                 | Default             | Description                                               |
 | ------------------- | ------------------- | --------------------------------------------------------- |
-| `max_db_mb`         | `50`                | Maximum size of the database in MB                        |
-| `max_images_mb`     | `100`               | Maximum size of the images folder in MB                   |
+| `max_entries`       | `1000`              | Number of entries kept in history; oldest are removed     |
 | `ttl_secs`          | unset               | Automatically delete entries older than this many seconds |
 | `clipboard`         | `true`              | Track the regular clipboard (Ctrl+C)                      |
 | `primary_selection` | `false`             | Track the primary selection (mouse highlight)             |
@@ -72,7 +70,11 @@ primary_selection = false
 | `pin_key`           | `alt+p`             | Keybind to pin/unpin in rofi                              |
 | `pin_icon`          | `view-pin-symbolic` | Icon shown for pinned entries in rofi                     |
 
-When a size limit is exceeded, the oldest entries are removed automatically.
+When the history exceeds `max_entries`, the oldest entries are removed
+automatically.
+
+Note: `max_db_mb` and `max_images_mb` were replaced by a single
+`max_entries` count.
 
 ## Usage
 

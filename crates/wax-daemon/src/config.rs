@@ -3,10 +3,8 @@ use std::path::{Path, PathBuf};
 
 #[derive(Deserialize, Debug, Clone, PartialEq)]
 pub struct Config {
-    #[serde(default = "default_max_db_mb")]
-    pub max_db_mb: u64,
-    #[serde(default = "default_max_images_mb")]
-    pub max_images_mb: u64,
+    #[serde(default = "default_max_entries")]
+    pub max_entries: u64,
     #[serde(default)]
     pub ttl_secs: Option<u64>,
     #[serde(default)]
@@ -21,19 +19,14 @@ fn default_true() -> bool {
     true
 }
 
-fn default_max_db_mb() -> u64 {
-    50
-}
-
-fn default_max_images_mb() -> u64 {
-    100
+fn default_max_entries() -> u64 {
+    1000
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
-            max_db_mb: default_max_db_mb(),
-            max_images_mb: default_max_images_mb(),
+            max_entries: default_max_entries(),
             ttl_secs: None,
             excluded_pattern: Vec::new(),
             clipboard: true,
@@ -85,13 +78,8 @@ impl Config {
             None => "# ttl_secs = 604800  # 7 days".to_string(),
         };
         let content = format!(
-            "max_db_mb = {}\nmax_images_mb = {}\n{}\n\nclipboard = {}\nprimary_selection = {}\n\n{}\n",
-            self.max_db_mb,
-            self.max_images_mb,
-            ttl,
-            self.clipboard,
-            self.primary_selection,
-            excluded
+            "max_entries = {}\n{}\n\nclipboard = {}\nprimary_selection = {}\n\n{}\n",
+            self.max_entries, ttl, self.clipboard, self.primary_selection, excluded
         );
         std::fs::write(path, content).ok();
     }

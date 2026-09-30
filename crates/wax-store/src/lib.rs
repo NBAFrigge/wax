@@ -17,7 +17,7 @@ const HASH_TS: TableDefinition<u64, u64> = TableDefinition::new("hash_ts");
 const TRIM_BATCH: usize = 50;
 
 /// How many clips the picker cache holds. This is a hard ceiling on what
-/// `wax list` can return, independent of `max_db_mb` — the store keeps more
+/// `wax list` can return, independent of `max_entries` — the store keeps more
 /// entries in redb than the CLI is able to show.
 const CACHE_ENTRY_LIMIT: usize = 1000;
 
@@ -47,16 +47,15 @@ pub struct Clip {
 
 #[derive(Clone)]
 pub struct Limits {
-    pub max_db_bytes: u64,
-    pub max_images_bytes: u64,
+    /// How many entries to keep in history. `u64::MAX` means unlimited.
+    pub max_entries: u64,
     pub ttl_secs: Option<u64>,
 }
 
 impl Default for Limits {
     fn default() -> Self {
         Self {
-            max_db_bytes: u64::MAX,
-            max_images_bytes: u64::MAX,
+            max_entries: u64::MAX,
             ttl_secs: None,
         }
     }
@@ -64,9 +63,7 @@ impl Default for Limits {
 
 pub struct ClipStore {
     db: Database,
-    db_path: PathBuf,
     images_dir: PathBuf,
-    images_dir_dim: AtomicU64,
     limits: Limits,
 }
 
@@ -112,13 +109,12 @@ impl ClipStore {
     /// Production callers use [`ClipStore::open`]. Tests need this because the
     /// default images directory is the real user data directory.
     fn open_at(path: &Path, images_dir: &Path, limits: Limits) -> Result<Self, redb::Error> {
-        let path = path.to_path_buf();
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).ok();
         }
-        let mut db = Database::builder()
+        let db = Database::builder()
             .set_cache_size(DB_CACHE_BYTES)
-            .create(&path)?;
+            .create(path)?;
 
         {
             let txn = db.begin_write()?;
@@ -144,20 +140,9 @@ impl ClipStore {
             txn.commit()?;
         }
 
-        let metadata = std::fs::metadata(&path)?;
-        if metadata.len() > limits.max_db_bytes {
-            db.compact()?;
-        }
-
-        let images_dir = images_dir.to_path_buf();
-
-        let images_dir_dim = dir_size(&images_dir);
-
         let store = Self {
             db,
-            db_path: path,
-            images_dir,
-            images_dir_dim: AtomicU64::new(images_dir_dim),
+            images_dir: images_dir.to_path_buf(),
             limits,
         };
         store.enforce_limits();
@@ -182,8 +167,6 @@ impl ClipStore {
         let path = self.images_dir.join(format!("{}.png", hash));
         if !path.exists() {
             std::fs::write(&path, data)?;
-            self.images_dir_dim
-                .fetch_add(data.len() as u64, Ordering::Relaxed);
         }
         let path_str = path.to_string_lossy().into_owned();
         let changed = self.push(Clip {
@@ -332,8 +315,6 @@ impl ClipStore {
         }
         txn.commit()?;
         if let Some(path) = file_to_remove {
-            self.images_dir_dim
-                .fetch_sub(std::fs::metadata(path)?.len(), Ordering::Relaxed);
             std::fs::remove_file(path).ok();
         }
         Ok(removed)
@@ -349,13 +330,22 @@ impl ClipStore {
             let pinned = txn.open_table(PINNED)?;
             let mut hash_ts = txn.open_table(HASH_TS)?;
 
+            let pinned_hashes: HashSet<u64> = pinned
+                .iter()?
+                .filter_map(|e| e.ok().map(|(k, _)| k.value()))
+                .collect();
+
+            // Pinned entries are skipped rather than counted, so a heavily-pinned
+            // history still trims: the scan continues past them to collect `n`
+            // unpinned entries.
             let to_remove: Vec<(u64, u64)> = history
                 .iter()?
-                .take(n)
                 .filter_map(|e| {
                     let (k, v) = e.ok()?;
-                    Some((k.value(), v.value()))
+                    let (ts, hash) = (k.value(), v.value());
+                    (!pinned_hashes.contains(&hash)).then_some((ts, hash))
                 })
+                .take(n)
                 .collect();
 
             for (ts, _) in &to_remove {
@@ -367,31 +357,22 @@ impl ClipStore {
                 .filter_map(|e| e.ok().map(|(_, v)| v.value()))
                 .collect();
 
-            let pinned_hashes: HashSet<u64> = pinned
-                .iter()?
-                .filter_map(|e| e.ok().map(|(k, _)| k.value()))
-                .collect();
-
             for (_, hash) in &to_remove {
                 if !still_referenced.contains(hash) {
                     hash_ts.remove(hash)?;
-                    if !pinned_hashes.contains(hash) {
-                        if let Ok(Some(data)) = clips.get(hash)
-                            && let Ok(clip) = bincode::deserialize::<Clip>(data.value())
-                            && let ClipContent::Image(path) = clip.content
-                        {
-                            image_paths.push(path);
-                        }
-                        clips.remove(hash)?;
+                    if let Ok(Some(data)) = clips.get(hash)
+                        && let Ok(clip) = bincode::deserialize::<Clip>(data.value())
+                        && let ClipContent::Image(path) = clip.content
+                    {
+                        image_paths.push(path);
                     }
+                    clips.remove(hash)?;
                 }
             }
         }
         txn.commit()?;
 
         for path in &image_paths {
-            self.images_dir_dim
-                .fetch_sub(std::fs::metadata(path)?.len(), Ordering::Relaxed);
             std::fs::remove_file(path).ok();
         }
 
@@ -414,11 +395,19 @@ impl ClipStore {
             let pinned = txn.open_table(PINNED)?;
             let mut hash_ts = txn.open_table(HASH_TS)?;
 
+            let pinned_hashes: HashSet<u64> = pinned
+                .iter()?
+                .filter_map(|e| e.ok().map(|(k, _)| k.value()))
+                .collect();
+
+            // Pinned entries are exempt from the TTL, for the same reason they
+            // are exempt from trimming: pinning means "keep this".
             let to_remove: Vec<(u64, u64)> = history
                 .range(..cutoff)?
                 .filter_map(|e| {
                     let (k, v) = e.ok()?;
-                    Some((k.value(), v.value()))
+                    let (ts, hash) = (k.value(), v.value());
+                    (!pinned_hashes.contains(&hash)).then_some((ts, hash))
                 })
                 .collect();
 
@@ -431,51 +420,48 @@ impl ClipStore {
                 .filter_map(|e| e.ok().map(|(_, v)| v.value()))
                 .collect();
 
-            let pinned_hashes: HashSet<u64> = pinned
-                .iter()?
-                .filter_map(|e| e.ok().map(|(k, _)| k.value()))
-                .collect();
-
             for (_, hash) in &to_remove {
                 if !still_referenced.contains(hash) {
                     hash_ts.remove(hash)?;
-                    if !pinned_hashes.contains(hash) {
-                        if let Ok(Some(data)) = clips.get(hash)
-                            && let Ok(clip) = bincode::deserialize::<Clip>(data.value())
-                            && let ClipContent::Image(path) = clip.content
-                        {
-                            image_paths.push(path);
-                        }
-                        clips.remove(hash)?;
+                    if let Ok(Some(data)) = clips.get(hash)
+                        && let Ok(clip) = bincode::deserialize::<Clip>(data.value())
+                        && let ClipContent::Image(path) = clip.content
+                    {
+                        image_paths.push(path);
                     }
+                    clips.remove(hash)?;
                 }
             }
         }
         txn.commit()?;
 
         for path in &image_paths {
-            self.images_dir_dim
-                .fetch_sub(std::fs::metadata(path)?.len(), Ordering::Relaxed);
             std::fs::remove_file(path).ok();
         }
 
         Ok(())
     }
 
+    fn history_len(&self) -> Result<u64, redb::Error> {
+        let txn = self.db.begin_read()?;
+        Ok(txn.open_table(HISTORY)?.len()?)
+    }
+
     fn enforce_limits(&self) {
-        let db_size = std::fs::metadata(&self.db_path)
-            .map(|m| m.len())
-            .unwrap_or(0);
-        if db_size > self.limits.max_db_bytes {
-            self.trim_oldest(TRIM_BATCH).ok();
+        match self.history_len() {
+            Ok(count) if count > self.limits.max_entries => {
+                if let Err(e) = self.trim_oldest(TRIM_BATCH) {
+                    eprintln!("wax-store: trim failed: {e}");
+                }
+            }
+            Ok(_) => {}
+            Err(e) => eprintln!("wax-store: cannot read history length: {e}"),
         }
 
-        if self.images_dir_dim.load(Ordering::Relaxed) > self.limits.max_images_bytes {
-            self.trim_oldest(TRIM_BATCH).ok();
-        }
-
-        if self.limits.ttl_secs.is_some() {
-            self.check_expire().ok();
+        if self.limits.ttl_secs.is_some()
+            && let Err(e) = self.check_expire()
+        {
+            eprintln!("wax-store: expiry failed: {e}");
         }
     }
 
@@ -552,8 +538,6 @@ impl ClipStore {
         txn.commit()?;
 
         for path in &image_paths {
-            self.images_dir_dim
-                .fetch_sub(std::fs::metadata(path)?.len(), Ordering::Relaxed);
             std::fs::remove_file(path).ok();
         }
 
@@ -656,8 +640,6 @@ impl ClipStore {
         let path = self.images_dir.join(format!("{}.png", hash));
         if !path.exists() {
             std::fs::write(&path, data)?;
-            self.images_dir_dim
-                .fetch_add(data.len() as u64, Ordering::Relaxed);
         }
         let path_str = path.to_string_lossy().into_owned();
         let hash_key = xxh3_64(path_str.as_bytes());
@@ -679,19 +661,6 @@ impl ClipStore {
         txn.commit()?;
         Ok(())
     }
-}
-
-fn dir_size(path: &Path) -> u64 {
-    std::fs::read_dir(path)
-        .ok()
-        .map(|entries| {
-            entries
-                .filter_map(|e| e.ok())
-                .filter_map(|e| e.metadata().ok())
-                .map(|m| m.len())
-                .sum()
-        })
-        .unwrap_or(0)
 }
 
 fn clip_hash(text: &str) -> u64 {

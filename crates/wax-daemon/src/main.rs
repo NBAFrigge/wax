@@ -13,13 +13,14 @@ use wax_store::{ClipContent, ClipStore, Limits};
 use wayland_client::{Connection, EventQueue};
 use wayland_protocols_wlr::data_control::v1::client::zwlr_data_control_offer_v1::ZwlrDataControlOfferV1;
 
-/// How many times to try opening the database before giving up. The previous
-/// daemon may still hold the lock while it shuts down.
+/// How many times to try opening the database before giving up
 const DB_OPEN_ATTEMPTS: u32 = 10;
 
 const DB_OPEN_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(500);
 
-const BYTES_PER_MB: u64 = 1024 * 1024;
+/// Upper bound on a single clipboard offer, so a source app offering an
+/// enormous `text/plain` cannot make the daemon read it all into memory.
+const MAX_OFFER_BYTES: u64 = 64 * 1024 * 1024;
 
 fn open_store_with_retry(
     path: &std::path::Path,
@@ -60,8 +61,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let config = config::Config::load();
     let limits = wax_store::Limits {
-        max_db_bytes: config.max_db_mb * BYTES_PER_MB,
-        max_images_bytes: config.max_images_mb * BYTES_PER_MB,
+        max_entries: config.max_entries,
         ttl_secs: config.ttl_secs,
     };
 
@@ -180,14 +180,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 continue;
             };
 
-            if let Err(e) = handle_offer(
-                offer,
-                mime,
-                &mut event_queue,
-                &store,
-                &regex_exclude,
-                &limits,
-            ) {
+            if let Err(e) = handle_offer(offer, mime, &mut event_queue, &store, &regex_exclude) {
                 eprintln!("failed to handle clipboard offer: {}", e);
             }
 
@@ -211,21 +204,15 @@ fn handle_offer(
     event_queue: &mut EventQueue<State>,
     store: &ClipStore,
     regex_set: &RegexSet,
-    limits: &wax_store::Limits,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let (fd_read, fd_write) = rustix::pipe::pipe()?;
     offer.receive(mime.to_string(), fd_write.as_fd());
     drop(fd_write);
     event_queue.flush()?;
 
-    let max_bytes = match mime {
-        "image/png" => limits.max_images_bytes,
-        _ => limits.max_db_bytes,
-    };
-
     let mut buffer = Vec::new();
     std::fs::File::from(fd_read)
-        .take(max_bytes)
+        .take(MAX_OFFER_BYTES)
         .read_to_end(&mut buffer)?;
 
     match mime {

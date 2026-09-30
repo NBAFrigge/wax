@@ -8,4 +8,5 @@ mod common;
 mod images;
 mod limits;
 mod multipage;
+mod pins;
 mod store;

@@ -45,8 +45,7 @@ pub fn temp_store_with_ttl(ttl_secs: u64) -> ClipStore {
     ClipStore::open(
         new_dir("ttl").join("wax.redb"),
         Limits {
-            max_db_bytes: u64::MAX,
-            max_images_bytes: u64::MAX,
+            max_entries: u64::MAX,
             ttl_secs: Some(ttl_secs),
         },
     )

@@ -103,8 +103,7 @@ fn test_delete_text() {
 #[test]
 fn test_enforce_limits() {
     let store = temp_store_with(Limits {
-        max_db_bytes: 1,
-        max_images_bytes: u64::MAX,
+        max_entries: 1,
         ttl_secs: None,
     });
     for i in 0..60 {
