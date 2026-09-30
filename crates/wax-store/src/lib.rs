@@ -108,8 +108,11 @@ impl ClipStore {
     /// Production callers use [`ClipStore::open`]. Tests need this because the
     /// default images directory is the real user data directory.
     fn open_at(path: &Path, images_dir: &Path, limits: Limits) -> Result<Self, redb::Error> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).ok();
+        if let Some(parent) = path.parent()
+            && let Err(e) = std::fs::create_dir_all(parent)
+            && e.kind() != std::io::ErrorKind::AlreadyExists
+        {
+            eprintln!("wax-store: could not create {}: {e}", parent.display());
         }
         let db = Database::builder()
             .set_cache_size(DB_CACHE_BYTES)
@@ -317,7 +320,7 @@ impl ClipStore {
         }
         txn.commit()?;
         if let Some(path) = file_to_remove {
-            std::fs::remove_file(path).ok();
+            remove_image_file(path);
         }
         Ok(removed)
     }
@@ -369,7 +372,7 @@ impl ClipStore {
         txn.commit()?;
 
         for path in &image_paths {
-            std::fs::remove_file(path).ok();
+            remove_image_file(path);
         }
 
         Ok(rows_removed)
@@ -425,7 +428,7 @@ impl ClipStore {
         txn.commit()?;
 
         for path in &image_paths {
-            std::fs::remove_file(path).ok();
+            remove_image_file(path);
         }
 
         Ok(())
@@ -473,8 +476,13 @@ impl ClipStore {
             content.push(b'\0');
         }
         let tmp = cache_path().with_extension("tmp");
-        if std::fs::write(&tmp, &content).is_ok() {
-            std::fs::rename(&tmp, cache_path()).ok();
+        match std::fs::write(&tmp, &content) {
+            Ok(()) => {
+                if let Err(e) = std::fs::rename(&tmp, cache_path()) {
+                    eprintln!("wax-store: could not replace the cache file: {e}");
+                }
+            }
+            Err(e) => eprintln!("wax-store: could not write the cache file: {e}"),
         }
     }
 
@@ -529,7 +537,7 @@ impl ClipStore {
         txn.commit()?;
 
         for path in &image_paths {
-            std::fs::remove_file(path).ok();
+            remove_image_file(path);
         }
 
         self.rebuild_cache();
@@ -656,6 +664,20 @@ impl ClipStore {
 
 fn clip_hash(text: &str) -> u64 {
     xxh3_64(text.as_bytes())
+}
+
+/// Delete a stored image file, logging anything other than "already gone".
+///
+/// A missing file is normal rather than a problem: the clip row was removed by
+/// an earlier trim, or the file was cleaned up out of band. Only a real
+/// failure is worth reporting, since it means the bytes are still on disk with
+/// no database row pointing at them.
+fn remove_image_file(path: &str) {
+    match std::fs::remove_file(path) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => eprintln!("wax-store: could not delete image {path}: {e}"),
+    }
 }
 
 fn now_micros() -> u64 {
