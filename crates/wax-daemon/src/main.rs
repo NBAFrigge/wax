@@ -187,17 +187,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 continue;
             }
 
-            let mime = if state.mime_types.iter().any(|m| m == "text/plain") {
-                "text/plain"
-            } else if state.mime_types.iter().any(|m| m == "image/png") {
-                "image/png"
-            } else {
+            let mime = state
+                .mime_types
+                .iter()
+                .find(|m| *m == "text/plain")
+                .or_else(|| {
+                    state
+                        .mime_types
+                        .iter()
+                        .find(|m| m.starts_with("text/plain"))
+                })
+                .or_else(|| state.mime_types.iter().find(|m| *m == "UTF8_STRING"))
+                .or_else(|| state.mime_types.iter().find(|m| *m == "STRING"))
+                .or_else(|| state.mime_types.iter().find(|m| *m == "image/png"))
+                .cloned();
+
+            let Some(mime) = mime else {
+                eprintln!("wax: no supported format offered: {:?}", state.mime_types);
                 state.current_offer = None;
                 state.mime_types.clear();
                 continue;
             };
 
-            if let Err(e) = handle_offer(offer, mime, &mut event_queue, &store, &regex_exclude) {
+            if let Err(e) = handle_offer(offer, &mime, &mut event_queue, &store, &regex_exclude) {
                 eprintln!("failed to handle clipboard offer: {}", e);
             }
 
@@ -232,17 +244,15 @@ fn handle_offer(
         .take(MAX_OFFER_BYTES)
         .read_to_end(&mut buffer)?;
 
-    match mime {
-        "text/plain" => {
-            let text = String::from_utf8_lossy(&buffer);
-            if accept_text(&text, regex_set) {
-                store.push_text(&text)?;
-            }
+    if is_text_mime(mime) {
+        let text = String::from_utf8_lossy(&buffer);
+        if accept_text(&text, regex_set) {
+            store.push_text(&text)?;
         }
-        "image/png" => {
-            store.push_image(&buffer)?;
-        }
-        _ => {}
+    } else if mime == "image/png" {
+        store.push_image(&buffer)?;
+    } else {
+        eprintln!("wax: unsupported clipboard type {mime}, not stored");
     }
 
     Ok(())
@@ -250,4 +260,20 @@ fn handle_offer(
 
 fn accept_text(text: &str, regex_set: &RegexSet) -> bool {
     !text.trim().is_empty() && !regex_set.is_match(text)
+}
+
+/// Whether a MIME type carries text that should be stored as a text clip.
+///
+/// Apps advertise the same clipboard data under several names: the bare
+/// `text/plain` most often, but also `text/plain;charset=utf-8` and the
+/// X11-era `UTF8_STRING` / `STRING`. Comparing against the bare literal alone
+/// drops every copy offered only under one of the other names.
+///
+/// Deliberately narrow: only `text/plain` and its parameterised forms count.
+/// Browsers offer `text/html` and `text/rtf` alongside the plain text, and a
+/// prefix match on `text/` would paste raw markup into the target app.
+fn is_text_mime(mime: &str) -> bool {
+    mime == "text/plain"
+        || mime.starts_with("text/plain;")
+        || matches!(mime, "UTF8_STRING" | "STRING" | "TEXT")
 }

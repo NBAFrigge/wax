@@ -4,5 +4,6 @@
 //! crate-private items directly.
 
 mod config;
+mod mime;
 mod socket;
 mod state;
