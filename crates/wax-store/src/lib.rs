@@ -11,10 +11,7 @@ const HISTORY: TableDefinition<u64, u64> = TableDefinition::new("history");
 const PINNED: TableDefinition<u64, u64> = TableDefinition::new("pinned");
 const HASH_TS: TableDefinition<u64, u64> = TableDefinition::new("hash_ts");
 
-/// How many of the oldest entries to drop per round when over a size limit.
-/// This is a batch size, not a target: callers keep trimming until the data
-/// actually fits, or until a round removes nothing.
-const TRIM_BATCH: usize = 50;
+const DELETE_PERCENTAGE: u64 = 10;
 
 /// How many clips the picker cache holds. This is a hard ceiling on what
 /// `wax list` can return, independent of `max_entries` — the store keeps more
@@ -322,7 +319,6 @@ impl ClipStore {
 
     fn trim_oldest(&self, n: usize) -> Result<(), Box<dyn std::error::Error>> {
         let mut image_paths: Vec<String> = Vec::new();
-
         let txn = self.db.begin_write()?;
         {
             let mut history = txn.open_table(HISTORY)?;
@@ -450,7 +446,9 @@ impl ClipStore {
     fn enforce_limits(&self) {
         match self.history_len() {
             Ok(count) if count > self.limits.max_entries => {
-                if let Err(e) = self.trim_oldest(TRIM_BATCH) {
+                let trim_bactch =
+                    (count - (self.limits.max_entries * DELETE_PERCENTAGE / 100)) as usize;
+                if let Err(e) = self.trim_oldest(trim_bactch) {
                     eprintln!("wax-store: trim failed: {e}");
                 }
             }
