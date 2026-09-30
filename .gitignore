@@ -6,3 +6,4 @@ contrib/wax-clipboard/
 contrib/*.pkg.tar.zst
 install.sh
 .ua/
+TODO.md
