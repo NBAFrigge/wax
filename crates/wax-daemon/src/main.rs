@@ -5,6 +5,7 @@ use regex::RegexSet;
 use state::State;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::fd::AsFd;
+use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixListener;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -21,6 +22,9 @@ const DB_OPEN_RETRY_DELAY: std::time::Duration = std::time::Duration::from_milli
 /// Upper bound on a single clipboard offer, so a source app offering an
 /// enormous `text/plain` cannot make the daemon read it all into memory.
 const MAX_OFFER_BYTES: u64 = 64 * 1024 * 1024;
+
+// Owner read write
+const FILE_PERMISSION: u32 = 0o600;
 
 fn open_store_with_retry(
     path: &std::path::Path,
@@ -42,6 +46,20 @@ fn open_store_with_retry(
         DB_OPEN_ATTEMPTS
     )
     .into())
+}
+
+/// Bind the IPC socket, owner-only.
+///
+/// A freshly created socket gets `0777 & ~umask`, which under a typical umask
+/// of 022 is `0755`. Write permission is what grants `connect()`, so at that
+/// mode any local user could run `wax list` and read the entire clipboard
+/// history. The permission error is propagated rather than ignored: starting up
+/// with a world-readable socket is worse than not starting.
+fn bind_socket(path: &std::path::Path) -> Result<UnixListener, Box<dyn std::error::Error>> {
+    std::fs::remove_file(path).ok();
+    let listener = UnixListener::bind(path)?;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(FILE_PERMISSION))?;
+    Ok(listener)
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -76,8 +94,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let running = Arc::new(AtomicBool::new(true));
     let running_ipc = Arc::clone(&running);
 
-    std::fs::remove_file(&socket_path).ok();
-    let listener = UnixListener::bind(&socket_path)?;
+    let listener = bind_socket(&socket_path)?;
     eprintln!("listening on {}", socket_path.display());
 
     std::thread::spawn(move || {
