@@ -235,8 +235,8 @@ fn handle_offer(
     match mime {
         "text/plain" => {
             let text = String::from_utf8_lossy(&buffer);
-            if !regex_set.is_match(&text) {
-                store.push_text(text.trim())?;
+            if accept_text(&text, regex_set) {
+                store.push_text(&text)?;
             }
         }
         "image/png" => {
@@ -246,4 +246,8 @@ fn handle_offer(
     }
 
     Ok(())
+}
+
+fn accept_text(text: &str, regex_set: &RegexSet) -> bool {
+    !text.trim().is_empty() && !regex_set.is_match(text)
 }
