@@ -24,6 +24,8 @@ const DB_CACHE_BYTES: usize = 256 * 1024;
 
 const MICROS_PER_SEC: u64 = 1_000_000;
 
+const IMAGE_PREFIX: &str = "[img]";
+
 /// The images directory used by [`ClipStore::open`].
 fn default_images_dir() -> PathBuf {
     dirs::data_dir()
@@ -179,7 +181,7 @@ impl ClipStore {
     fn push(&self, clip: Clip) -> Result<bool, Box<dyn std::error::Error>> {
         let hash_key = match &clip.content {
             ClipContent::Text(t) => xxh3_64(t.as_bytes()),
-            ClipContent::Image(p) => xxh3_64(p.as_bytes()),
+            ClipContent::Image(p) => xxh3_64(format!("{IMAGE_PREFIX} {p}").as_bytes()),
         };
 
         let txn = self.db.begin_write()?;
@@ -273,7 +275,10 @@ impl ClipStore {
     }
 
     pub fn delete_image(&self, path: &str) -> Result<(), redb::Error> {
-        let changed = self.delete_by_hash(xxh3_64(path.as_bytes()), Some(path))?;
+        let changed = self.delete_by_hash(
+            xxh3_64(format!("{IMAGE_PREFIX} {path}").as_bytes()),
+            Some(path),
+        )?;
         if changed {
             self.rebuild_cache();
         }
@@ -461,7 +466,7 @@ impl ClipStore {
             match &c.content {
                 ClipContent::Text(t) => content.extend_from_slice(t.as_bytes()),
                 ClipContent::Image(p) => {
-                    content.extend_from_slice(b"[img] ");
+                    content.extend_from_slice(IMAGE_PREFIX.as_bytes());
                     content.extend_from_slice(p.as_bytes());
                 }
             }
@@ -628,7 +633,7 @@ impl ClipStore {
             std::fs::write(&path, data)?;
         }
         let path_str = path.to_string_lossy().into_owned();
-        let hash_key = xxh3_64(path_str.as_bytes());
+        let hash_key = xxh3_64(format!("{IMAGE_PREFIX} {path_str}").as_bytes());
 
         let txn = self.db.begin_write()?;
         {
@@ -650,8 +655,7 @@ impl ClipStore {
 }
 
 fn clip_hash(text: &str) -> u64 {
-    let key = text.strip_prefix("[img] ").unwrap_or(text);
-    xxh3_64(key.as_bytes())
+    xxh3_64(text.as_bytes())
 }
 
 fn now_micros() -> u64 {
