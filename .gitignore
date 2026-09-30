@@ -7,3 +7,4 @@ contrib/*.pkg.tar.zst
 install.sh
 .ua/
 TODO.md
+.pi/
