@@ -317,9 +317,10 @@ impl ClipStore {
         Ok(removed)
     }
 
-    fn trim_oldest(&self, n: usize) -> Result<(), Box<dyn std::error::Error>> {
+    fn trim_oldest(&self, n: usize) -> Result<u64, Box<dyn std::error::Error>> {
         let mut image_paths: Vec<String> = Vec::new();
         let txn = self.db.begin_write()?;
+        let mut rows_removed = 0;
         {
             let mut history = txn.open_table(HISTORY)?;
             let mut clips = txn.open_table(CLIPS)?;
@@ -346,6 +347,7 @@ impl ClipStore {
 
             for (ts, _) in &to_remove {
                 history.remove(ts)?;
+                rows_removed += 1;
             }
 
             let still_referenced: HashSet<u64> = history
@@ -372,7 +374,7 @@ impl ClipStore {
             std::fs::remove_file(path).ok();
         }
 
-        Ok(())
+        Ok(rows_removed)
     }
 
     fn check_expire(&self) -> Result<(), Box<dyn std::error::Error>> {
