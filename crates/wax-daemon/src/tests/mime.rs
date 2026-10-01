@@ -1,7 +1,79 @@
 //! Deciding what to do with a clipboard offer, without needing Wayland.
 
-use crate::{accept_text, is_text_mime};
+use crate::{accept_text, is_text_mime, pick_mime};
 use regex::RegexSet;
+
+fn offered(list: &[&str]) -> Vec<String> {
+    list.iter().map(|s| s.to_string()).collect()
+}
+
+#[test]
+fn plain_text_wins_over_everything() {
+    assert_eq!(
+        pick_mime(&offered(&[
+            "text/html",
+            "image/png",
+            "text/plain",
+            "UTF8_STRING"
+        ])),
+        Some("text/plain".into())
+    );
+}
+
+#[test]
+fn a_charset_variant_is_used_when_plain_is_absent() {
+    assert_eq!(
+        pick_mime(&offered(&[
+            "text/html",
+            "image/png",
+            "text/plain;charset=utf-8"
+        ])),
+        Some("text/plain;charset=utf-8".into())
+    );
+}
+
+#[test]
+fn legacy_text_names_are_accepted() {
+    for name in ["UTF8_STRING", "STRING"] {
+        assert_eq!(
+            pick_mime(&offered(&["image/png", name])),
+            Some(name.to_string()),
+            "{name} should be selected"
+        );
+    }
+}
+
+#[test]
+fn text_is_preferred_over_an_image() {
+    assert_eq!(
+        pick_mime(&offered(&["image/png", "UTF8_STRING"])),
+        Some("UTF8_STRING".into()),
+        "what is copied is almost always text"
+    );
+}
+
+#[test]
+fn an_image_only_offer_still_resolves() {
+    assert_eq!(
+        pick_mime(&offered(&["image/png"])),
+        Some("image/png".into())
+    );
+}
+
+#[test]
+fn an_offer_with_nothing_supported_resolves_to_none() {
+    assert_eq!(pick_mime(&offered(&["text/html", "application/pdf"])), None);
+    assert_eq!(pick_mime(&[]), None);
+}
+
+#[test]
+fn html_is_never_selected() {
+    assert_eq!(
+        pick_mime(&offered(&["text/html", "application/x-moz-file"])),
+        None,
+        "pasting raw markup would be wrong"
+    );
+}
 
 #[test]
 fn plain_text_is_recognised() {

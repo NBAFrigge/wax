@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use wax_ipc::{Request, Response};
 use wax_store::{ClipContent, ClipStore, Limits};
-use wayland_client::{Connection, EventQueue};
+use wayland_client::{Connection, EventQueue, Proxy};
 use wayland_protocols_wlr::data_control::v1::client::zwlr_data_control_offer_v1::ZwlrDataControlOfferV1;
 
 /// How many times to try opening the database before giving up
@@ -175,7 +175,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         if let Some(offer) = &state.current_offer {
-            let skip = if state.is_primary {
+            let (is_primary, mime) = match state.offers.get(&offer.id()) {
+                Some(info) => (info.is_primary, pick_mime(&info.mime_types)),
+                None => {
+                    clear_offer(&mut state);
+                    continue;
+                }
+            };
+
+            let skip = if is_primary {
                 !config.primary_selection
             } else {
                 !config.clipboard
@@ -186,23 +194,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 continue;
             }
 
-            let mime = state
-                .mime_types
-                .iter()
-                .find(|m| *m == "text/plain")
-                .or_else(|| {
-                    state
-                        .mime_types
-                        .iter()
-                        .find(|m| m.starts_with("text/plain"))
-                })
-                .or_else(|| state.mime_types.iter().find(|m| *m == "UTF8_STRING"))
-                .or_else(|| state.mime_types.iter().find(|m| *m == "STRING"))
-                .or_else(|| state.mime_types.iter().find(|m| *m == "image/png"))
-                .cloned();
-
             let Some(mime) = mime else {
-                eprintln!("wax: no supported format offered: {:?}", state.mime_types);
+                eprintln!("wax: clipboard offer had no supported format");
                 clear_offer(&mut state);
                 continue;
             };
@@ -221,11 +214,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn pick_mime(offered: &[String]) -> Option<String> {
+    let find = |ok: fn(&str) -> bool| offered.iter().find(|m| ok(m)).cloned();
+    find(|m| m == "text/plain")
+        .or_else(|| find(|m| m.starts_with("text/plain;")))
+        .or_else(|| find(|m| m == "UTF8_STRING"))
+        .or_else(|| find(|m| m == "STRING"))
+        .or_else(|| find(|m| m == "image/png"))
+}
+
 fn clear_offer(state: &mut State) {
     if let Some(offer) = state.current_offer.take() {
+        state.offers.remove(&offer.id());
         offer.destroy();
     }
-    state.mime_types.clear();
 }
 
 #[cfg(test)]

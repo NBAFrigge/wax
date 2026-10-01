@@ -1,7 +1,8 @@
+use std::collections::HashMap;
 use std::sync::Arc;
-use wayland_client::backend::ObjectData;
+use wayland_client::backend::{ObjectData, ObjectId};
 use wayland_client::protocol::wl_seat::{self, WlSeat};
-use wayland_client::{Connection, Dispatch, QueueHandle, protocol::wl_registry};
+use wayland_client::{Connection, Dispatch, Proxy, QueueHandle, protocol::wl_registry};
 use wayland_protocols_wlr::data_control::v1::client::zwlr_data_control_device_v1::{
     self, ZwlrDataControlDeviceV1,
 };
@@ -12,13 +13,20 @@ use wayland_protocols_wlr::data_control::v1::client::zwlr_data_control_offer_v1:
     self, ZwlrDataControlOfferV1,
 };
 
+const MAX_TRACKED_OFFERS: usize = 256;
+
+#[derive(Default)]
+pub struct OfferInfo {
+    pub mime_types: Vec<String>,
+    pub is_primary: bool,
+}
+
 pub struct State {
     pub manager: Option<ZwlrDataControlManagerV1>,
     pub seat: Option<WlSeat>,
     pub device: Option<ZwlrDataControlDeviceV1>,
-    pub mime_types: Vec<String>,
+    pub offers: HashMap<ObjectId, OfferInfo>,
     pub current_offer: Option<ZwlrDataControlOfferV1>,
-    pub is_primary: bool,
 }
 
 impl State {
@@ -27,9 +35,8 @@ impl State {
             manager: None,
             seat: None,
             device: None,
-            mime_types: Vec::with_capacity(16),
+            offers: HashMap::new(),
             current_offer: None,
-            is_primary: false,
         }
     }
 }
@@ -94,16 +101,23 @@ impl Dispatch<ZwlrDataControlDeviceV1, ()> for State {
         _qh: &QueueHandle<Self>,
     ) {
         match event {
-            zwlr_data_control_device_v1::Event::DataOffer { .. } => {
-                state.mime_types.clear();
+            zwlr_data_control_device_v1::Event::DataOffer { id } => {
+                if state.offers.len() >= MAX_TRACKED_OFFERS {
+                    state.offers.clear();
+                }
+                state.offers.insert(id.id(), OfferInfo::default());
             }
             zwlr_data_control_device_v1::Event::Selection { id } => {
+                if let Some(offer) = &id {
+                    state.offers.entry(offer.id()).or_default().is_primary = false;
+                }
                 state.current_offer = id;
-                state.is_primary = false;
             }
             zwlr_data_control_device_v1::Event::PrimarySelection { id } => {
+                if let Some(offer) = &id {
+                    state.offers.entry(offer.id()).or_default().is_primary = true;
+                }
                 state.current_offer = id;
-                state.is_primary = true;
             }
             zwlr_data_control_device_v1::Event::Finished => {}
             _ => {}
@@ -127,14 +141,19 @@ impl Dispatch<ZwlrDataControlDeviceV1, ()> for State {
 impl Dispatch<ZwlrDataControlOfferV1, ()> for State {
     fn event(
         state: &mut Self,
-        _offer: &ZwlrDataControlOfferV1,
+        offer: &ZwlrDataControlOfferV1,
         event: zwlr_data_control_offer_v1::Event,
         _data: &(),
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
         if let zwlr_data_control_offer_v1::Event::Offer { mime_type } = event {
-            state.mime_types.push(mime_type);
+            state
+                .offers
+                .entry(offer.id())
+                .or_default()
+                .mime_types
+                .push(mime_type);
         }
     }
 }
