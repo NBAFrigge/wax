@@ -182,8 +182,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
 
             if skip {
-                state.current_offer = None;
-                state.mime_types.clear();
+                clear_offer(&mut state);
                 continue;
             }
 
@@ -204,8 +203,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             let Some(mime) = mime else {
                 eprintln!("wax: no supported format offered: {:?}", state.mime_types);
-                state.current_offer = None;
-                state.mime_types.clear();
+                clear_offer(&mut state);
                 continue;
             };
 
@@ -213,8 +211,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 eprintln!("failed to handle clipboard offer: {}", e);
             }
 
-            state.current_offer = None;
-            state.mime_types.clear();
+            clear_offer(&mut state);
         }
     }
 
@@ -222,6 +219,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     std::fs::remove_file(&socket_path).ok();
     eprintln!("wax daemon stopped");
     Ok(())
+}
+
+fn clear_offer(state: &mut State) {
+    if let Some(offer) = state.current_offer.take() {
+        offer.destroy();
+    }
+    state.mime_types.clear();
 }
 
 #[cfg(test)]
