@@ -6,16 +6,19 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 use xxhash_rust::xxh3::xxh3_64;
 
+/// hash -> clip (bincode-encoded `Clip`)
 const CLIPS: TableDefinition<u64, &[u8]> = TableDefinition::new("clips");
+/// ts -> hash
 const HISTORY: TableDefinition<u64, u64> = TableDefinition::new("history");
+/// hash -> ts
 const PINNED: TableDefinition<u64, u64> = TableDefinition::new("pinned");
+/// hash -> ts
 const HASH_TS: TableDefinition<u64, u64> = TableDefinition::new("hash_ts");
 
 const DELETE_PERCENTAGE: u64 = 10;
 
 /// How many clips the picker cache holds. This is a hard ceiling on what
-/// `wax list` can return, independent of `max_entries` — the store keeps more
-/// entries in redb than the CLI is able to show.
+/// `wax list` can return, independent of `max_entries`
 const CACHE_ENTRY_LIMIT: usize = 1000;
 
 /// redb's in-memory page cache. Kept small deliberately: the daemon is a
@@ -26,11 +29,39 @@ const MICROS_PER_SEC: u64 = 1_000_000;
 
 const IMAGE_PREFIX: &str = "[img]";
 
-/// The images directory used by [`ClipStore::open`].
+/// images directory
 fn default_images_dir() -> PathBuf {
     dirs::data_dir()
         .unwrap_or_else(|| PathBuf::from("/tmp"))
         .join("wax/images")
+}
+
+// db directory
+pub fn default_db_path() -> PathBuf {
+    dirs::data_dir()
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
+        .join("wax/db.redb")
+}
+
+pub fn cache_path() -> PathBuf {
+    dirs::data_dir()
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
+        .join("wax/history.cache")
+}
+
+pub fn read_cache(n: usize) -> Option<Vec<String>> {
+    let bytes = std::fs::read(cache_path()).ok()?;
+    if bytes.is_empty() {
+        return Some(vec![]);
+    }
+    Some(
+        bytes
+            .split(|&b| b == b'\0')
+            .filter(|s| !s.is_empty())
+            .take(n)
+            .filter_map(|s| std::str::from_utf8(s).ok().map(|s| s.to_owned()))
+            .collect(),
+    )
 }
 
 #[derive(Serialize, Deserialize)]
@@ -66,37 +97,6 @@ pub struct ClipStore {
     limits: Limits,
 }
 
-pub fn default_db_path() -> PathBuf {
-    dirs::data_dir()
-        .unwrap_or_else(|| PathBuf::from("/tmp"))
-        .join("wax/db.redb")
-}
-
-pub fn cache_path() -> PathBuf {
-    dirs::data_dir()
-        .unwrap_or_else(|| PathBuf::from("/tmp"))
-        .join("wax/history.cache")
-}
-
-pub fn read_cache(n: usize) -> Option<Vec<String>> {
-    read_cache_from(&cache_path(), n)
-}
-
-pub fn read_cache_from(path: &Path, n: usize) -> Option<Vec<String>> {
-    let bytes = std::fs::read(path).ok()?;
-    if bytes.is_empty() {
-        return Some(vec![]);
-    }
-    Some(
-        bytes
-            .split(|&b| b == b'\0')
-            .filter(|s| !s.is_empty())
-            .take(n)
-            .filter_map(|s| std::str::from_utf8(s).ok().map(|s| s.to_owned()))
-            .collect(),
-    )
-}
-
 impl ClipStore {
     pub fn open(path: impl AsRef<Path>, limits: Limits) -> Result<Self, redb::Error> {
         let images_dir = default_images_dir();
@@ -104,9 +104,6 @@ impl ClipStore {
     }
 
     /// Open a store with an explicit images directory.
-    ///
-    /// Production callers use [`ClipStore::open`]. Tests need this because the
-    /// default images directory is the real user data directory.
     fn open_at(path: &Path, images_dir: &Path, limits: Limits) -> Result<Self, redb::Error> {
         if let Some(parent) = path.parent()
             && let Err(e) = std::fs::create_dir_all(parent)
@@ -114,10 +111,12 @@ impl ClipStore {
         {
             eprintln!("wax-store: could not create {}: {e}", parent.display());
         }
+        // create/open database
         let db = Database::builder()
             .set_cache_size(DB_CACHE_BYTES)
             .create(path)?;
 
+        // create tables
         {
             let txn = db.begin_write()?;
             txn.open_table(CLIPS)?;
@@ -132,6 +131,8 @@ impl ClipStore {
             {
                 let history = txn.open_table(HISTORY)?;
                 let mut hash_ts = txn.open_table(HASH_TS)?;
+
+                // migration from timestamp - hash to hash - timestamp table
                 if hash_ts.len()? == 0 && history.len()? > 0 {
                     for entry in history.iter()? {
                         let (k, v) = entry?;
@@ -147,15 +148,18 @@ impl ClipStore {
             images_dir: images_dir.to_path_buf(),
             limits,
         };
+
         store.enforce_limits();
         store.rebuild_cache();
         Ok(store)
     }
 
+    // wrap text into a clip and call push
     pub fn push_text(&self, text: &str) -> Result<(), Box<dyn std::error::Error>> {
         let changed = self.push(Clip {
             content: ClipContent::Text(text.to_string()),
         })?;
+
         if changed {
             self.enforce_limits();
             self.rebuild_cache();
@@ -163,17 +167,22 @@ impl ClipStore {
         Ok(())
     }
 
+    // save the image, wrap the path int oa clip and call push
     pub fn push_image(&self, data: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
         let hash = xxh3_64(data);
+
         std::fs::create_dir_all(&self.images_dir)?;
+
         let path = self.images_dir.join(format!("{}.png", hash));
         if !path.exists() {
             std::fs::write(&path, data)?;
         }
         let path_str = path.to_string_lossy().into_owned();
+
         let changed = self.push(Clip {
             content: ClipContent::Image(path_str),
         })?;
+
         if changed {
             self.enforce_limits();
             self.rebuild_cache();
@@ -181,6 +190,7 @@ impl ClipStore {
         Ok(())
     }
 
+    // save the clip into the db
     fn push(&self, clip: Clip) -> Result<bool, Box<dyn std::error::Error>> {
         let hash_key = match &clip.content {
             ClipContent::Text(t) => xxh3_64(t.as_bytes()),
@@ -195,16 +205,21 @@ impl ClipStore {
             let mut hash_ts = txn.open_table(HASH_TS)?;
 
             let last_hash = history.last()?.map(|e| e.1.value());
+
             if last_hash == Some(hash_key) {
+                // duplicate skipping
                 changed = false;
             } else if clips.get(hash_key)?.is_none() {
+                // clip never seen before
                 let bytes = bincode::serialize(&clip)?;
                 clips.insert(hash_key, bytes.as_slice())?;
                 let ts = unique_micros();
                 history.insert(ts, hash_key)?;
                 hash_ts.insert(hash_key, ts)?;
+
                 changed = true;
             } else {
+                // seen before ->  update the ts
                 let old_ts = if let Some(e) = hash_ts.get(hash_key)? {
                     Some(e.value())
                 } else {
@@ -226,6 +241,7 @@ impl ClipStore {
         Ok(changed)
     }
 
+    // get last n clips
     pub fn get(&self, last_n: usize) -> Result<Vec<Clip>, redb::Error> {
         let txn = self.db.begin_read()?;
         let clips = txn.open_table(CLIPS)?;
@@ -248,6 +264,7 @@ impl ClipStore {
                 Some((ts, clip))
             })
             .collect();
+
         pinned_with_ts.sort_by(|a, b| b.0.cmp(&a.0));
         let pinned_clips: Vec<Clip> = pinned_with_ts.into_iter().map(|(_, c)| c).collect();
 
@@ -341,8 +358,7 @@ impl ClipStore {
                 .collect();
 
             // Pinned entries are skipped rather than counted, so a heavily-pinned
-            // history still trims: the scan continues past them to collect `n`
-            // unpinned entries.
+            // history still trims
             let to_remove: Vec<(u64, u64)> = history
                 .iter()?
                 .filter_map(|e| {
@@ -400,7 +416,7 @@ impl ClipStore {
                 .collect();
 
             // Pinned entries are exempt from the TTL, for the same reason they
-            // are exempt from trimming: pinning means "keep this".
+            // are exempt from trimming
             let to_remove: Vec<(u64, u64)> = history
                 .range(..cutoff)?
                 .filter_map(|e| {
